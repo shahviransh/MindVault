@@ -25,7 +25,7 @@ const STEPS = [
   {
     icon: KeyRound,
     title: "You stay in control",
-    body: "Your recovery key always ends a session. Task Manager, Settings, and uninstall keep working. Closing MindVault removes its firewall rules.",
+    body: "Your recovery key always ends a session. Task Manager, Settings, a terminal, and uninstall keep working. Closing MindVault removes its firewall rules.",
   },
 ];
 

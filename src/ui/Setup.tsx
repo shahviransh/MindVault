@@ -35,8 +35,8 @@ export function Enroll({ onKey }: { onKey: (key: string) => void }) {
       </h2>
       <ul className="mt-3 space-y-2 text-sm text-mv-muted">
         {[
-          "MindVault locks the Windows user who starts it. It does not lock other accounts.",
-          "It never blocks Task Manager, Settings, Safe Mode, or uninstall.",
+          "MindVault locks the account that starts it. It does not lock other accounts.",
+          "It never blocks Task Manager, Settings, a terminal, Safe Mode, or uninstall.",
           "The recovery key always ends a session. Another admin can uninstall, and that removes the firewall rules.",
         ].map((line) => (
           <li key={line} className="flex gap-2">

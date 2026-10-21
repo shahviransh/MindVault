@@ -139,7 +139,7 @@ export function App() {
           {view.practiceMode ? (
             <p className="mb-5 flex items-center gap-2 rounded-2xl border border-mv-warn/30 bg-mv-warn/10 px-4 py-2.5 text-xs text-mv-warn">
               <FlaskConical className="size-4 shrink-0" />
-              Preview mode: this copy does not change Windows. Firewall rules are added only by the Windows app, and only while a session is open.
+              Preview mode: this window does not change the computer. The desktop app adds MindVault firewall rules only while a session is open.
             </p>
           ) : null}
           <div key={page}>

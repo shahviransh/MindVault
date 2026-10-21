@@ -67,6 +67,7 @@ pub const DENY_HOSTS: &[&str] = &[
     "cursor.com",
     "cursor.sh",
     "ollama.com",
+    "lmstudio.ai",
     "youtube.com",
     "youtu.be",
     "netflix.com",
@@ -86,6 +87,10 @@ const AI_IMAGES: &[&str] = &[
     "claude.exe",
     "ollama.exe",
     "ollama app.exe",
+    "lm studio.exe",
+    "lms.exe",
+    "lm-studio",
+    "lmstudio",
     "cursor.exe",
     "copilot.exe",
     "githubcopilot.exe",
@@ -94,11 +99,17 @@ const AI_IMAGES: &[&str] = &[
 
 const BROWSERS: &[&str] = &[
     "chrome.exe",
+    "google-chrome",
+    "google-chrome-stable",
+    "chromium",
+    "chromium-browser",
     "msedge.exe",
+    "microsoft-edge",
     "firefox.exe",
     "brave.exe",
     "opera.exe",
     "vivaldi.exe",
+    "safari",
 ];
 
 const ENTERTAINMENT: &[&str] = &[
@@ -131,6 +142,47 @@ const PROTECTED: &[&str] = &[
     "registry.exe",
     "regedit.exe",
     "cmd.exe",
+    "systemd",
+    "init",
+    "launchd",
+    "kernel_task",
+    "gnome-shell",
+    "plasmashell",
+    "xorg",
+    "xwayland",
+    "mutter",
+    "kwin_wayland",
+    "kwin_x11",
+    "finder",
+    "dock",
+    "systemuiserver",
+    "windowserver",
+    "loginwindow",
+    "controlcenter",
+    "terminal",
+    "gnome-terminal",
+    "gnome-terminal-server",
+    "konsole",
+    "kitty",
+    "alacritty",
+    "wezterm",
+    "xterm",
+    "ptyxis",
+    "sudo",
+    "pkexec",
+    "osascript",
+    "sshd",
+    "bash",
+    "zsh",
+    "fish",
+    "sh",
+    "dash",
+    "apt",
+    "apt-get",
+    "dpkg",
+    "pacman",
+    "nft",
+    "pfctl",
 ];
 
 const AI_CLI_STEMS: &[&str] = &["claude", "cursor-agent", "aider", "ollama", "copilot"];
@@ -266,6 +318,15 @@ fn is_our_helper(cmd: &[String]) -> bool {
         || joined.contains("remove-netfirewallrule")
         || joined.contains("--uninstall-cleanup")
         || joined.contains("new-netfirewallrule")
+        || joined.contains("table inet mindvault")
+        || joined.contains("pf.anchors/mindvault")
+        || joined.contains("socketfilterfw")
+}
+
+fn matches_name(list: &[&str], base: &str) -> bool {
+    let stem = base.trim_end_matches(".exe");
+    list.iter()
+        .any(|item| *item == base || item.trim_end_matches(".exe") == stem)
 }
 
 fn shell_invokes_ai(cmd: &[String]) -> bool {
@@ -277,46 +338,65 @@ fn shell_invokes_ai(cmd: &[String]) -> bool {
 }
 
 fn is_ai_cli(image: &str, cmd: &[String]) -> bool {
-    const INTERPRETERS: &[&str] = &[
-        "node.exe",
-        "python.exe",
-        "pythonw.exe",
-        "python3.exe",
-        "bun.exe",
-        "deno.exe",
-        "ruby.exe",
-    ];
-    if !INTERPRETERS.contains(&image) {
+    const INTERPRETERS: &[&str] = &["node", "python", "pythonw", "python3", "bun", "deno", "ruby"];
+    let stem = image.trim_end_matches(".exe");
+    if !INTERPRETERS.contains(&stem) {
         return false;
     }
     shell_invokes_ai(cmd)
 }
 
-/// `ollama serve` and the Ollama app stay up when the tutor points at this computer.
-/// `ollama run` is still a chat, so it is closed.
-fn is_local_model_server(image: &str, cmd: &[String]) -> bool {
-    let base = image_base(image);
-    if base == "ollama app.exe" {
-        return true;
-    }
-    if base != "ollama.exe" {
-        return false;
-    }
-    !cmd.iter().any(|arg| arg.eq_ignore_ascii_case("run"))
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeptServer {
+    None,
+    Ollama,
+    LmStudio,
 }
 
-pub fn should_stop(image: &str, cmd: &[String], level: Level, extra: &[String], keep_local_server: bool) -> bool {
+/// The local server that matches the saved tutor address stays up. `ollama run` is still closed.
+pub fn kept_server_for_base(base: &str) -> KeptServer {
+    let Ok(url) = url::Url::parse(base.trim()) else {
+        return KeptServer::None;
+    };
+    let Some(host) = url.host_str() else {
+        return KeptServer::None;
+    };
+    let host = host.trim_matches(['[', ']']);
+    let loopback = host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1";
+    if !loopback {
+        return KeptServer::None;
+    }
+    match url.port().unwrap_or(0) {
+        11434 => KeptServer::Ollama,
+        1234 => KeptServer::LmStudio,
+        _ => KeptServer::None,
+    }
+}
+
+fn is_spared_server(image: &str, cmd: &[String], kept: KeptServer) -> bool {
+    let base = image_base(image);
+    let stem = base.trim_end_matches(".exe");
+    match kept {
+        KeptServer::Ollama => {
+            stem == "ollama app" || (stem == "ollama" && !cmd.iter().any(|arg| arg.eq_ignore_ascii_case("run")))
+        }
+        KeptServer::LmStudio => matches!(stem, "lm studio" | "lms" | "lm-studio" | "lmstudio"),
+        KeptServer::None => false,
+    }
+}
+
+pub fn should_stop(image: &str, cmd: &[String], level: Level, extra: &[String], kept: KeptServer) -> bool {
     let base = image_base(image);
     if is_protected_image(&base) || is_our_helper(cmd) {
         return false;
     }
-    if keep_local_server && is_local_model_server(image, cmd) {
+    if is_spared_server(image, cmd, kept) {
         return false;
     }
     if extra.iter().any(|name| image_base(name) == base) {
         return valid_block_image(&base);
     }
-    if AI_IMAGES.contains(&base.as_str()) {
+    if matches_name(AI_IMAGES, &base) {
         return true;
     }
     if is_ai_cli(&base, cmd) {
@@ -325,26 +405,27 @@ pub fn should_stop(image: &str, cmd: &[String], level: Level, extra: &[String], 
     if matches!(base.as_str(), "powershell.exe" | "pwsh.exe") {
         return shell_invokes_ai(cmd);
     }
-    if level != Level::Light && BROWSERS.contains(&base.as_str()) {
+    if level != Level::Light && matches_name(BROWSERS, &base) {
         return true;
     }
-    if level == Level::Full && ENTERTAINMENT.contains(&base.as_str()) {
+    if level == Level::Full && matches_name(ENTERTAINMENT, &base) {
         return true;
     }
     false
 }
 
-pub fn select_targets(procs: &[ProcInfo], level: Level, extra: &[String], keep_local_server: bool) -> Vec<u32> {
+pub fn select_targets(procs: &[ProcInfo], level: Level, extra: &[String], kept: KeptServer) -> Vec<u32> {
     let self_pid = std::process::id();
     procs
         .iter()
-        .filter(|proc_| proc_.pid != self_pid && should_stop(&proc_.name, &proc_.cmd, level, extra, keep_local_server))
+        .filter(|proc_| proc_.pid != self_pid && should_stop(&proc_.name, &proc_.cmd, level, extra, kept))
         .map(|proc_| proc_.pid)
         .collect()
 }
 
 pub fn locks_this_computer() -> bool {
-    cfg!(target_os = "windows") && std::env::var("MINDVAULT_FAKE_ENFORCER").is_err()
+    std::env::var("MINDVAULT_FAKE_ENFORCER").is_err()
+        && (cfg!(windows) || cfg!(target_os = "linux") || cfg!(target_os = "macos"))
 }
 
 pub fn class_for_level(class: ProgramClass, level: Level) -> bool {
@@ -439,6 +520,7 @@ pub fn ai_domains_except(api_host: &str) -> Vec<String> {
         "githubcopilot.com",
         "api2.cursor.sh",
         "ollama.com",
+        "lmstudio.ai",
     ];
     let api_host = normalize_host(api_host);
     AI.iter()
@@ -473,31 +555,92 @@ pub fn candidate_programs() -> Vec<(ProgramClass, &'static str, &'static [&'stat
         (
             ProgramClass::Ai,
             "ollama",
-            &["Programs/Ollama/ollama.exe", "Ollama/ollama.exe"],
+            &[
+                "Programs/Ollama/ollama.exe",
+                "Ollama/ollama.exe",
+                "bin/ollama",
+                "local/bin/ollama",
+            ],
+        ),
+        (
+            ProgramClass::Ai,
+            "lmstudio",
+            &[
+                "Programs/LM Studio/LM Studio.exe",
+                "LM-Studio/LM Studio.exe",
+                "LM Studio.app/Contents/MacOS/LM Studio",
+                "bin/lm-studio",
+                "bin/lms",
+            ],
         ),
         (
             ProgramClass::Ai,
             "cursor",
-            &["Programs/cursor/Cursor.exe", "cursor/Cursor.exe"],
+            &[
+                "Programs/cursor/Cursor.exe",
+                "cursor/Cursor.exe",
+                "bin/cursor",
+                "local/bin/cursor",
+            ],
         ),
-        (ProgramClass::Ai, "code", &["Programs/Microsoft VS Code/Code.exe"]),
+        (
+            ProgramClass::Ai,
+            "code",
+            &[
+                "Programs/Microsoft VS Code/Code.exe",
+                "bin/code",
+                "share/code/code",
+            ],
+        ),
         (
             ProgramClass::Browser,
             "chrome",
-            &["Google/Chrome/Application/chrome.exe"],
+            &[
+                "Google/Chrome/Application/chrome.exe",
+                "bin/google-chrome",
+                "bin/google-chrome-stable",
+                "google/chrome/chrome",
+                "Google Chrome.app/Contents/MacOS/Google Chrome",
+            ],
         ),
         (
             ProgramClass::Browser,
             "msedge",
-            &["Microsoft/Edge/Application/msedge.exe"],
+            &[
+                "Microsoft/Edge/Application/msedge.exe",
+                "bin/microsoft-edge",
+                "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+            ],
         ),
-        (ProgramClass::Browser, "firefox", &["Mozilla Firefox/firefox.exe"]),
+        (
+            ProgramClass::Browser,
+            "firefox",
+            &[
+                "Mozilla Firefox/firefox.exe",
+                "bin/firefox",
+                "Firefox.app/Contents/MacOS/firefox",
+            ],
+        ),
         (
             ProgramClass::Browser,
             "brave",
-            &["BraveSoftware/Brave-Browser/Application/brave.exe"],
+            &[
+                "BraveSoftware/Brave-Browser/Application/brave.exe",
+                "bin/brave",
+                "bin/brave-browser",
+                "Brave Browser.app/Contents/MacOS/Brave Browser",
+            ],
         ),
-        (ProgramClass::Entertainment, "steam", &["Steam/steam.exe"]),
+        (
+            ProgramClass::Browser,
+            "safari",
+            &["Safari.app/Contents/MacOS/Safari"],
+        ),
+        (
+            ProgramClass::Entertainment,
+            "steam",
+            &["Steam/steam.exe", "bin/steam", "Steam.app/Contents/MacOS/steam_osx"],
+        ),
     ]
 }
 
@@ -542,7 +685,7 @@ mod tests {
                 name: name.into(),
                 cmd: vec![],
             }];
-            let hits = select_targets(&procs, Level::Full, &[name.into()], false);
+            let hits = select_targets(&procs, Level::Full, &[name.into()], KeptServer::None);
             assert!(hits.is_empty(), "{name}");
         }
     }
@@ -580,10 +723,10 @@ mod tests {
             cmd: vec!["powershell".into(), "Remove-NetFirewallRule".into()],
         };
         let procs = vec![ai, cli, vite, chrome, steam, helper];
-        assert_eq!(select_targets(&procs, Level::Light, &[], false), vec![1, 2]);
-        assert_eq!(select_targets(&procs, Level::Standard, &[], false), vec![1, 2, 4]);
+        assert_eq!(select_targets(&procs, Level::Light, &[], KeptServer::None), vec![1, 2]);
+        assert_eq!(select_targets(&procs, Level::Standard, &[], KeptServer::None), vec![1, 2, 4]);
         assert_eq!(
-            select_targets(&procs, Level::Full, &[], false),
+            select_targets(&procs, Level::Full, &[], KeptServer::None),
             vec![1, 2, 4, 5]
         );
         let ollama = vec![
@@ -598,8 +741,43 @@ mod tests {
                 cmd: vec!["ollama".into(), "run".into(), "llama3.2".into()],
             },
         ];
-        assert_eq!(select_targets(&ollama, Level::Light, &[], false), vec![7, 8]);
-        assert_eq!(select_targets(&ollama, Level::Light, &[], true), vec![8]);
+        assert_eq!(select_targets(&ollama, Level::Light, &[], KeptServer::None), vec![7, 8]);
+        assert_eq!(select_targets(&ollama, Level::Light, &[], KeptServer::Ollama), vec![8]);
+        let studio = vec![ProcInfo {
+            pid: 13,
+            name: "LM Studio.exe".into(),
+            cmd: vec![],
+        }];
+        assert_eq!(select_targets(&studio, Level::Light, &[], KeptServer::None), vec![13]);
+        assert_eq!(select_targets(&studio, Level::Light, &[], KeptServer::Ollama), vec![13]);
+        assert_eq!(select_targets(&studio, Level::Light, &[], KeptServer::LmStudio), Vec::<u32>::new());
+        assert_eq!(kept_server_for_base("http://127.0.0.1:1234/v1"), KeptServer::LmStudio);
+        assert_eq!(kept_server_for_base("http://127.0.0.1:11434/v1"), KeptServer::Ollama);
+        assert_eq!(kept_server_for_base("https://api.openai.com/v1"), KeptServer::None);
+        let unix = vec![
+            ProcInfo {
+                pid: 9,
+                name: "google-chrome".into(),
+                cmd: vec![],
+            },
+            ProcInfo {
+                pid: 10,
+                name: "systemd".into(),
+                cmd: vec![],
+            },
+            ProcInfo {
+                pid: 11,
+                name: "Finder".into(),
+                cmd: vec![],
+            },
+            ProcInfo {
+                pid: 12,
+                name: "ollama".into(),
+                cmd: vec!["ollama".into(), "serve".into()],
+            },
+        ];
+        assert_eq!(select_targets(&unix, Level::Light, &[], KeptServer::Ollama), Vec::<u32>::new());
+        assert_eq!(select_targets(&unix, Level::Standard, &[], KeptServer::Ollama), vec![9]);
     }
 
     #[test]

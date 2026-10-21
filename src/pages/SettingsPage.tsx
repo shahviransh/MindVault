@@ -427,9 +427,8 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
       </div>
       {local ? (
         <p className="mt-3 text-xs leading-relaxed text-mv-muted">
-          Use an OpenAI-compatible server. Ollama is <span className="font-mono">http://127.0.0.1:11434/v1</span> and the model name is one from{" "}
-          <span className="font-mono">ollama list</span>. Start it before a session. While locked, the Ollama server stays up so the tutor can use it.{" "}
-          <span className="font-mono">ollama run</span> in a terminal is still closed. Plain http is allowed only for this computer.
+          Use an OpenAI-compatible server. Ollama is <span className="font-mono">http://127.0.0.1:11434/v1</span> (the name from{" "}
+          <span className="font-mono">ollama list</span>). LM Studio is <span className="font-mono">http://127.0.0.1:1234/v1</span> and the model name shown for the loaded model. Start that server before a session. While locked, only the one you saved here stays open. LM Studio is closed when the tutor is Ollama or a cloud key, and <span className="font-mono">ollama run</span> is always closed. Plain http is allowed only for this computer.
         </p>
       ) : (
         <label className="mt-3 block text-sm text-mv-muted">

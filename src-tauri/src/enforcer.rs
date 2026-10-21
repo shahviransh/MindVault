@@ -9,7 +9,7 @@ pub trait Enforcer: Send {
     fn recorded(&self) -> Vec<String>;
 }
 
-// Test-only stand-in for WindowsEnforcer so session tests never touch the real firewall.
+// Test-only stand-in for HostEnforcer so session tests never touch the real firewall.
 #[derive(Default)]
 #[allow(dead_code)]
 pub struct MemoryEnforcer {
@@ -109,6 +109,21 @@ pub fn discover_programs(roots: &[PathBuf], level: crate::policy::Level) -> Vec<
     found
 }
 
+pub fn program_roots() -> Vec<PathBuf> {
+    let mut roots = windows_roots();
+    roots.push(PathBuf::from("/usr"));
+    roots.push(PathBuf::from("/usr/local"));
+    roots.push(PathBuf::from("/opt"));
+    roots.push(PathBuf::from("/Applications"));
+    roots.push(PathBuf::from("/System/Applications"));
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        roots.push(home.join(".local"));
+        roots.push(home.clone());
+    }
+    roots
+}
+
 pub fn windows_roots() -> Vec<PathBuf> {
     let mut roots = Vec::new();
     for key in ["ProgramFiles", "ProgramFiles(x86)", "LocalAppData", "ProgramW6432"] {
@@ -135,21 +150,58 @@ pub fn resolve_ips(hosts: &[String]) -> Vec<String> {
     ips
 }
 
-pub struct WindowsEnforcer;
+pub fn clear_platform() -> Result<(), String> {
+    if !crate::policy::locks_this_computer() {
+        return Ok(());
+    }
+    #[cfg(windows)]
+    {
+        return run_powershell(&clear_script());
+    }
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        return crate::oslock::clear_rules();
+    }
+    #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+    Ok(())
+}
 
-impl Enforcer for WindowsEnforcer {
+pub struct HostEnforcer;
+
+impl Enforcer for HostEnforcer {
     fn apply(&mut self, rules: &[RuleSpec]) -> Result<(), String> {
         if !crate::policy::locks_this_computer() {
             return Ok(());
         }
-        run_powershell(&apply_script(rules))
+        #[cfg(windows)]
+        {
+            return run_powershell(&apply_script(rules));
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            return crate::oslock::apply_rules(rules);
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        {
+            let _ = rules;
+            Ok(())
+        }
     }
 
     fn clear(&mut self) -> Result<(), String> {
         if !crate::policy::locks_this_computer() {
             return Ok(());
         }
-        run_powershell(&clear_script())
+        #[cfg(windows)]
+        {
+            return run_powershell(&clear_script());
+        }
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            return crate::oslock::clear_rules();
+        }
+        #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
+        Ok(())
     }
 
     fn recorded(&self) -> Vec<String> {

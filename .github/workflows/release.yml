@@ -65,7 +65,7 @@ jobs:
           releaseName: "MindVault ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}"
           releaseBody: |
             Installers for Windows, Linux, and macOS.
-            Firewall locking runs on Windows only. The Linux and macOS builds keep the study desk, games, and tutor, and do not change the operating system.
+            Windows uses firewall rules, Linux uses nftables, and macOS uses pf. Rules stay only while a session is open.
             These builds are not code-signed. Windows SmartScreen and macOS Gatekeeper ask you to confirm the app before it opens.
           releaseDraft: true
           prerelease: false

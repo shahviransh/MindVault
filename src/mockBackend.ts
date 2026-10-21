@@ -14,6 +14,7 @@ const DENY = [
   "cursor.com",
   "cursor.sh",
   "ollama.com",
+  "lmstudio.ai",
   "youtube.com",
   "youtu.be",
   "netflix.com",

@@ -1,8 +1,8 @@
 use crate::enforcer::Enforcer;
 use crate::error::{AppError, AppResult};
 use crate::policy::{
-    ai_domains_except, deny_hosts, entertainment_domains, sanitize_allowlist, select_targets,
-    specs_for, study_url_allowed, validate_minutes, Level, ProcInfo, RuleKind, RuleSpec,
+    ai_domains_except, deny_hosts, entertainment_domains, kept_server_for_base, sanitize_allowlist, select_targets,
+    specs_for, study_url_allowed, validate_minutes, KeptServer, Level, ProcInfo, RuleKind, RuleSpec,
 };
 use crate::secrets::Secrets;
 use crate::store::{Schedule, SessionRow, Store, Suggestion};
@@ -307,8 +307,8 @@ impl Service {
             return Vec::new();
         };
         let extra = self.store.custom_blocks().unwrap_or_default();
-        let keep_local_server = crate::tutor::is_loopback_base(&self.store.api_base().unwrap_or_default());
-        select_targets(procs, session.level, &extra, keep_local_server)
+        let kept = kept_server_for_base(&self.store.api_base().unwrap_or_default());
+        select_targets(procs, session.level, &extra, kept)
     }
 
     pub fn prepare_tutor(&self) -> AppResult<PreparedCall> {
@@ -425,7 +425,13 @@ impl Service {
                 // A Windows Firewall block overrides an allow rule. The tutor API host
                 // is therefore omitted from the global block, and known AI programs are
                 // blocked by their own executable path instead.
-                let programs = crate::enforcer::discover_programs(&crate::enforcer::windows_roots(), level);
+                let kept = kept_server_for_base(&self.store.api_base()?);
+                let mut programs = crate::enforcer::discover_programs(&crate::enforcer::program_roots(), level);
+                programs.retain(|program| match kept {
+                    KeptServer::Ollama => program.label != "ollama",
+                    KeptServer::LmStudio => program.label != "lmstudio",
+                    KeptServer::None => true,
+                });
                 let api_host = api_host(&self.store.api_base()?)?;
                 let ai_ips = if level == Level::Light {
                     Vec::new()

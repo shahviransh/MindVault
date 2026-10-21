@@ -1,4 +1,5 @@
 mod enforcer;
+mod oslock;
 mod error;
 mod policy;
 mod schedule;
@@ -7,7 +8,7 @@ mod session;
 mod store;
 mod tutor;
 
-use crate::enforcer::WindowsEnforcer;
+use crate::enforcer::HostEnforcer;
 use crate::policy::{Level, ProcInfo};
 use crate::secrets::KeyringSecrets;
 use crate::session::{practice_mode, AppView, Mode, Service};
@@ -49,7 +50,7 @@ pub fn uninstall_cleanup() {
             let _ = service.uninstall();
         }
         Err(_) => {
-            let _ = enforcer::run_powershell(&enforcer::clear_script());
+            let _ = enforcer::clear_platform();
         }
     }
 }
@@ -58,7 +59,7 @@ fn open_live() -> Result<Service, String> {
     let store = Store::open(&data_file()).map_err(|err| err.to_string())?;
     Ok(Service::new(
         store,
-        Box::new(WindowsEnforcer),
+        Box::new(HostEnforcer),
         Box::new(KeyringSecrets),
         Mode::Live,
     ))

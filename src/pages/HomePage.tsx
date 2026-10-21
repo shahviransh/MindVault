@@ -185,7 +185,7 @@ function ActiveSession({
           </div>
           <SessionControls session={session} onChange={onChange} onGames={() => onPage("games")} />
           <p className="text-xs text-mv-muted">
-            Task Manager, Settings, and uninstall keep working. Closing MindVault removes the firewall rules; reopening it continues this session
+            Task Manager, Settings, a terminal, and uninstall keep working. Closing MindVault removes the firewall rules; reopening it continues this session
             until the timer ends.
           </p>
         </div>
@@ -273,7 +273,7 @@ function StartSession({ onChange }: { onChange: (view: AppView) => void }) {
           <Play className="size-4" /> Start {level} lock
         </button>
         <p className="max-w-md text-xs text-mv-muted">
-          Standard and Full ask Windows for permission to add firewall rules. Denying that cancels the session. Max 8 hours.
+          Standard and Full ask for permission to add firewall rules. Denying that cancels the session. Max 8 hours.
         </p>
       </div>
     </section>
