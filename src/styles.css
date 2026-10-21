@@ -1,0 +1,203 @@
+@import "tailwindcss";
+
+/*
+ * Theme tokens live as plain CSS variables so the same Tailwind utility
+ * (e.g. `bg-mv-card`) repaints automatically when `.dark` toggles on <html>.
+ * No `dark:` variants are used anywhere in this app.
+ */
+@theme {
+  --font-sans: "Segoe UI Variable Text", "Segoe UI", Inter, system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", Inter, system-ui, sans-serif;
+
+  --color-mv-bg: var(--mv-bg);
+  --color-mv-ink: var(--mv-ink);
+  --color-mv-muted: var(--mv-muted);
+  --color-mv-card: var(--mv-card);
+  --color-mv-solid: var(--mv-solid);
+  --color-mv-field: var(--mv-field);
+  --color-mv-line: var(--mv-line);
+  --color-mv-accent: var(--mv-accent);
+  --color-mv-accent-2: var(--mv-accent-2);
+  --color-mv-good: var(--mv-good);
+  --color-mv-bad: var(--mv-bad);
+  --color-mv-warn: var(--mv-warn);
+
+  --animate-mv-rise: mv-rise 0.35s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+  --animate-mv-pop: mv-pop 0.25s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+
+  @keyframes mv-rise {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  @keyframes mv-pop {
+    from {
+      opacity: 0;
+      transform: scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+}
+
+:root {
+  --mv-bg: #f3f4fb;
+  --mv-ink: #14162b;
+  --mv-muted: #5d6283;
+  --mv-card: rgb(255 255 255 / 0.72);
+  --mv-solid: #ffffff;
+  --mv-field: rgb(255 255 255 / 0.9);
+  --mv-line: rgb(20 22 43 / 0.09);
+  --mv-accent: #7c3aed;
+  --mv-accent-2: #0891b2;
+  --mv-good: #059669;
+  --mv-bad: #e11d48;
+  --mv-warn: #d97706;
+  color-scheme: light;
+}
+
+.dark {
+  --mv-bg: #090a13;
+  --mv-ink: #eceefe;
+  --mv-muted: #9097b8;
+  --mv-card: rgb(23 25 43 / 0.62);
+  --mv-solid: #141627;
+  --mv-field: rgb(255 255 255 / 0.04);
+  --mv-line: rgb(255 255 255 / 0.08);
+  --mv-accent: #a78bfa;
+  --mv-accent-2: #22d3ee;
+  --mv-good: #34d399;
+  --mv-bad: #fb7185;
+  --mv-warn: #fbbf24;
+  color-scheme: dark;
+}
+
+@layer base {
+  body {
+    @apply min-h-screen font-sans text-mv-ink antialiased;
+    background:
+      radial-gradient(55rem 38rem at -10% -15%, color-mix(in oklab, var(--mv-accent) 20%, transparent), transparent 65%),
+      radial-gradient(45rem 36rem at 115% 5%, color-mix(in oklab, var(--mv-accent-2) 16%, transparent), transparent 65%),
+      radial-gradient(40rem 30rem at 50% 120%, color-mix(in oklab, var(--mv-accent) 10%, transparent), transparent 70%),
+      var(--mv-bg);
+    background-attachment: fixed;
+    transition: background-color 0.25s ease, color 0.25s ease;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--mv-accent) 35%, transparent);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in oklab, var(--mv-muted) 40%, transparent) transparent;
+  }
+}
+
+/*
+ * Custom utilities (Tailwind v4's `@utility`) so they can `@apply` each other
+ * and still be overridden by later utility classes on the same element.
+ */
+@utility mv-panel {
+  @apply rounded-3xl border border-mv-line bg-mv-card p-5 shadow-[0_1px_0_rgb(255_255_255/0.06)_inset,0_20px_50px_-30px_rgb(15_10_40/0.45)] backdrop-blur-xl sm:p-6;
+}
+
+@utility mv-label {
+  @apply text-[0.7rem] font-semibold tracking-[0.14em] text-mv-muted uppercase;
+}
+
+@utility mv-title {
+  @apply font-display text-xl font-semibold tracking-tight text-mv-ink;
+}
+
+@utility mv-gradient-text {
+  @apply bg-gradient-to-r from-mv-accent to-mv-accent-2 bg-clip-text text-transparent;
+}
+
+@utility mv-btn {
+  @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[#7c3aed] to-[#0891b2] px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-violet-600/25 transition duration-150 select-none hover:-translate-y-px hover:shadow-violet-600/40 hover:brightness-110 active:translate-y-0 disabled:pointer-events-none disabled:opacity-45;
+}
+
+@utility mv-btn-ghost {
+  @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-mv-line bg-mv-field px-4 py-2.5 text-sm font-semibold text-mv-ink transition duration-150 select-none hover:border-mv-accent/50 hover:bg-mv-accent/10 disabled:pointer-events-none disabled:opacity-45;
+}
+
+@utility mv-btn-danger {
+  @apply inline-flex cursor-pointer items-center justify-center gap-2 rounded-xl bg-mv-bad px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-rose-600/25 transition duration-150 select-none hover:brightness-110 disabled:pointer-events-none disabled:opacity-45;
+}
+
+@utility mv-icon-btn {
+  @apply inline-flex size-10 cursor-pointer items-center justify-center rounded-xl border border-mv-line bg-mv-field text-mv-ink transition hover:border-mv-accent/50 hover:bg-mv-accent/10;
+}
+
+@utility mv-input {
+  @apply w-full rounded-xl border border-mv-line bg-mv-field px-3.5 py-2.5 text-sm text-mv-ink transition outline-none placeholder:text-mv-muted/70 focus:border-mv-accent/60 focus:ring-4 focus:ring-mv-accent/15;
+}
+
+@utility mv-chip {
+  @apply inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-mv-line bg-mv-field px-3 py-1.5 text-sm text-mv-ink transition hover:border-mv-accent/50 hover:bg-mv-accent/10;
+}
+
+@utility mv-segment {
+  @apply inline-flex flex-wrap gap-1 rounded-2xl border border-mv-line bg-mv-field p-1;
+}
+
+@utility mv-tab {
+  @apply inline-flex cursor-pointer items-center gap-2 rounded-xl px-3.5 py-2 text-sm font-medium text-mv-muted transition hover:text-mv-ink;
+}
+
+@utility mv-tab-on {
+  @apply inline-flex cursor-pointer items-center gap-2 rounded-xl bg-mv-solid px-3.5 py-2 text-sm font-semibold text-mv-ink shadow-sm ring-1 ring-mv-line;
+}
+
+@utility mv-nav {
+  @apply flex w-full cursor-pointer items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-mv-muted transition hover:bg-mv-accent/10 hover:text-mv-ink;
+}
+
+@utility mv-nav-on {
+  @apply flex w-full cursor-pointer items-center gap-3 rounded-xl bg-gradient-to-r from-mv-accent/20 to-mv-accent-2/10 px-3 py-2.5 text-sm font-semibold text-mv-ink ring-1 ring-mv-accent/25;
+}
+
+@utility mv-level {
+  @apply flex cursor-pointer flex-col gap-1.5 rounded-2xl border border-mv-line bg-mv-field p-4 text-left text-mv-ink transition hover:-translate-y-0.5 hover:border-mv-accent/40;
+}
+
+@utility mv-level-on {
+  @apply flex cursor-pointer flex-col gap-1.5 rounded-2xl border border-mv-accent/60 bg-gradient-to-br from-mv-accent/15 to-mv-accent-2/10 p-4 text-left text-mv-ink shadow-lg ring-4 shadow-violet-600/10 ring-mv-accent/10;
+}
+
+@utility mv-card-flip {
+  @apply min-h-28 min-w-52 cursor-pointer rounded-2xl border border-mv-line bg-mv-field p-4 text-left text-sm transition hover:-translate-y-0.5 hover:border-mv-accent/50;
+}
+
+@utility mv-sudoku {
+  display: grid;
+  gap: 0.25rem;
+  grid-template-columns: repeat(9, 2.5rem);
+}
+
+@utility mv-sudoku-cell {
+  @apply flex size-10 items-center justify-center rounded-lg border border-mv-line bg-mv-field text-center text-base text-mv-ink transition outline-none focus:border-mv-accent focus:ring-4 focus:ring-mv-accent/20;
+}
+
+@utility mv-cube-net {
+  display: grid;
+  gap: 0.375rem;
+  grid-template-columns: repeat(4, 7.2rem);
+}
+
+@utility mv-face {
+  @apply grid grid-cols-3 gap-[0.15rem];
+}
+
+@utility mv-sticker {
+  @apply flex h-[2.2rem] items-center justify-center rounded-md text-sm text-black/75 shadow-inner;
+}
