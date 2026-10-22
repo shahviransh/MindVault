@@ -40,6 +40,37 @@ fn ps_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "''"))
 }
 
+/// Windows Firewall rejects `\\?\` paths, missing `.exe` suffixes, and `? * " < > |`.
+/// Those rules are left out so one bad path does not cancel the session.
+pub fn firewall_program_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    let path = if let Some(rest) = trimmed.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix(r"\\?\") {
+        rest.to_string()
+    } else {
+        trimmed.to_string()
+    };
+    if path.len() < 7 || path.len() > 260 {
+        return None;
+    }
+    let drive = path.as_bytes().get(1).copied() == Some(b':');
+    let unc = path.starts_with(r"\\");
+    if !drive && !unc {
+        return None;
+    }
+    if !path.to_ascii_lowercase().ends_with(".exe") {
+        return None;
+    }
+    if path
+        .chars()
+        .any(|ch| matches!(ch, '/' | '*' | '?' | '"' | '<' | '>' | '|' | '\n' | '\r'))
+    {
+        return None;
+    }
+    Some(path)
+}
+
 pub fn apply_script(rules: &[RuleSpec]) -> String {
     let mut script = String::from("$ErrorActionPreference = 'Stop'\r\n");
     script.push_str(&clear_script());
@@ -50,9 +81,12 @@ pub fn apply_script(rules: &[RuleSpec]) -> String {
         let name = ps_quote(&rule.name);
         match &rule.kind {
             RuleKind::BlockProgram { path } => {
+                let Some(path) = firewall_program_path(path) else {
+                    continue;
+                };
                 script.push_str(&format!(
                     "New-NetFirewallRule -DisplayName {name} -Direction Outbound -Action Block -Profile Any -Program {} | Out-Null\r\n",
-                    ps_quote(path)
+                    ps_quote(&path)
                 ));
             }
             RuleKind::BlockRemote { addresses } => {
@@ -72,6 +106,9 @@ pub fn apply_script(rules: &[RuleSpec]) -> String {
                 if addresses.is_empty() {
                     continue;
                 }
+                let Some(path) = firewall_program_path(path) else {
+                    continue;
+                };
                 let list = addresses
                     .iter()
                     .map(|address| ps_quote(address))
@@ -79,7 +116,7 @@ pub fn apply_script(rules: &[RuleSpec]) -> String {
                     .join(",");
                 script.push_str(&format!(
                     "New-NetFirewallRule -DisplayName {name} -Direction Outbound -Action Allow -Profile Any -Program {} -RemoteAddress {list} | Out-Null\r\n",
-                    ps_quote(path)
+                    ps_quote(&path)
                 ));
             }
         }
@@ -302,5 +339,29 @@ mod tests {
         assert!(script.contains("Remove-NetFirewallRule"));
         assert!(clear_script().contains("MindVault_*"));
         assert!(!script.contains("taskmgr"));
+    }
+
+    #[test]
+    fn firewall_script_drops_paths_windows_rejects() {
+        let rules = vec![
+            crate::policy::RuleSpec {
+                name: "MindVault_Allow_Tutor".into(),
+                kind: RuleKind::AllowProgramRemote {
+                    path: r"\\?\C:\Apps\MindVault.exe".into(),
+                    addresses: vec!["1.2.3.4".into()],
+                },
+            },
+            crate::policy::RuleSpec {
+                name: "MindVault_BlockProg_shim".into(),
+                kind: RuleKind::BlockProgram {
+                    path: r"C:\Users\viran\bin\code".into(),
+                },
+            },
+        ];
+        let script = apply_script(&rules);
+        assert!(script.contains(r"C:\Apps\MindVault.exe"));
+        assert!(!script.contains('?'));
+        assert!(!script.contains(r"bin\code"));
+        assert!(firewall_program_path(r"\\?\UNC\server\share\app.exe").as_deref() == Some(r"\\server\share\app.exe"));
     }
 }

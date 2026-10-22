@@ -199,7 +199,10 @@ impl Service {
     fn begin(&mut self, level: Level, minutes: u32) -> AppResult<AppView> {
         validate_minutes(minutes)?;
         let rules = self.plan(level)?;
-        self.enforcer.apply(&rules).map_err(AppError::Message)?;
+        if let Err(err) = self.enforcer.apply(&rules) {
+            let _ = self.enforcer.clear();
+            return Err(AppError::Message(err));
+        }
         let now = Utc::now();
         let session = SessionRow {
             level,
@@ -449,7 +452,8 @@ impl Service {
                     crate::enforcer::resolve_ips(&[api_host])
                 };
                 let exe = std::env::current_exe()
-                    .map(|path| path.display().to_string())
+                    .ok()
+                    .and_then(|path| crate::enforcer::firewall_program_path(&path.display().to_string()))
                     .unwrap_or_default();
                 Ok(specs_for(
                     level,
