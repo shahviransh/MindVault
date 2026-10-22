@@ -53,10 +53,10 @@ impl Store {
         )?;
         let store = Self { conn };
         if store.get("api_base")?.is_none() {
-            store.set("api_base", "https://api.openai.com/v1")?;
+            store.set("api_base", "https://text.pollinations.ai/openai")?;
         }
         if store.get("model")?.is_none() {
-            store.set("model", "gpt-4o-mini")?;
+            store.set("model", "openai-fast")?;
         }
         if store.get("allow_hosts")?.is_none() {
             store.set(
@@ -121,7 +121,7 @@ impl Store {
     pub fn api_base(&self) -> AppResult<String> {
         Ok(self
             .get("api_base")?
-            .unwrap_or_else(|| "https://api.openai.com/v1".into()))
+            .unwrap_or_else(|| "https://text.pollinations.ai/openai".into()))
     }
 
     pub fn set_api_base(&self, value: &str) -> AppResult<()> {
@@ -129,7 +129,7 @@ impl Store {
     }
 
     pub fn model(&self) -> AppResult<String> {
-        Ok(self.get("model")?.unwrap_or_else(|| "gpt-4o-mini".into()))
+        Ok(self.get("model")?.unwrap_or_else(|| "openai-fast".into()))
     }
 
     pub fn set_model(&self, value: &str) -> AppResult<()> {

@@ -382,8 +382,12 @@ impl Service {
 
     fn prepared_call(&self) -> AppResult<PreparedCall> {
         let base = self.store.api_base()?;
-        let key = self.secrets.get_key().map_err(AppError::Message)?.unwrap_or_default();
-        if key.is_empty() && !crate::tutor::is_loopback_base(&base) {
+        let mut key = self.secrets.get_key().map_err(AppError::Message)?.unwrap_or_default();
+        // A saved cloud key must not be forwarded to the public free tutor.
+        if crate::tutor::is_keyless_base(&base) {
+            key.clear();
+        }
+        if key.is_empty() && !crate::tutor::allows_empty_key(&base) {
             return Err(AppError::NoKey);
         }
         Ok(PreparedCall {
@@ -722,6 +726,11 @@ mod tests {
     fn loopback_tutor_does_not_need_a_key() {
         let mut svc = setup();
         ready(&mut svc);
+        let fresh = svc.prepare_classify("notes.exe").unwrap();
+        assert!(fresh.key.is_empty());
+        assert_eq!(fresh.base, "https://text.pollinations.ai/openai");
+        svc.set_api_config("1234", "https://api.openai.com/v1", "gpt-4o-mini")
+            .unwrap();
         assert!(matches!(svc.prepare_classify("notes.exe"), Err(AppError::NoKey)));
         svc.set_api_config("1234", "http://127.0.0.1:11434/v1", "llama3.2")
             .unwrap();
@@ -732,6 +741,17 @@ mod tests {
         assert!(svc.prepare_tutor().is_ok());
         assert!(validate_api_base("http://10.0.0.5:11434/v1").is_err());
         assert!(validate_api_base("http://[::1]:8080/v1").is_ok());
+        svc.end_light("1234").unwrap();
+        svc.set_api_config("1234", "https://text.pollinations.ai/openai", "openai-fast")
+            .unwrap();
+        svc.set_api_key("1234", "sk-keep-this-local").unwrap();
+        let call = svc.prepare_classify("notes.exe").unwrap();
+        assert!(call.key.is_empty());
+        assert_eq!(call.model, "openai-fast");
+        svc.set_api_config("1234", "https://api.openai.com/v1", "gpt-4o-mini")
+            .unwrap();
+        let cloud = svc.prepare_classify("notes.exe").unwrap();
+        assert_eq!(cloud.key, "sk-keep-this-local");
     }
 
     #[test]

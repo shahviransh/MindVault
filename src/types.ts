@@ -24,6 +24,12 @@ export interface Schedule {
   level: Level;
 }
 
+export interface LocalTutorStatus {
+  id: string;
+  running: boolean;
+  model: string;
+}
+
 export interface AppView {
   enrolled: boolean;
   recoveryAcknowledged: boolean;

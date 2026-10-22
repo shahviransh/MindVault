@@ -232,6 +232,11 @@ fn set_api_config(
 }
 
 #[tauri::command]
+async fn probe_local_tutors() -> Vec<crate::tutor::LocalTutorStatus> {
+    crate::tutor::probe_local_tutors().await
+}
+
+#[tauri::command]
 fn set_api_key(state: State<AppState>, pin: String, key: String) -> Result<AppView, String> {
     let mut service = lock(&state);
     service.set_api_key(&pin, &key).map_err(|err| err.to_string())
@@ -450,6 +455,7 @@ pub fn run() {
             reset_setup,
             set_allowlist,
             set_api_config,
+            probe_local_tutors,
             set_api_key,
             start_session,
             set_schedules,

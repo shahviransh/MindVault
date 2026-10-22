@@ -256,8 +256,24 @@ pub fn is_loopback_base(base: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The anonymous Pollinations text endpoint. Any other https host still needs a key.
+pub fn is_keyless_base(base: &str) -> bool {
+    let Ok(url) = url::Url::parse(base.trim()) else {
+        return false;
+    };
+    url.scheme() == "https"
+        && url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("text.pollinations.ai"))
+        && url.port().is_none()
+        && url.path().trim_end_matches('/') == "/openai"
+        && url.query().is_none()
+}
+
+pub fn allows_empty_key(base: &str) -> bool {
+    is_loopback_base(base) || is_keyless_base(base)
+}
+
 fn body_for(base: &str, mut body: Value) -> (Value, u64) {
-    if is_loopback_base(base) {
+    if allows_empty_key(base) {
         if let Some(obj) = body.as_object_mut() {
             obj.remove("response_format");
         }
@@ -320,6 +336,11 @@ async fn post_chat(base: &str, key: &str, body: &Value, timeout_secs: u64) -> Ap
     if !response.status().is_success() {
         let status = response.status();
         let text = response.text().await.unwrap_or_default();
+        if status.as_u16() == 402 || text.contains("FREE_LIMIT") {
+            return Err(AppError::Message(
+                "The free online tutor allows about one reply every 30 seconds. Wait a moment and try again.".into(),
+            ));
+        }
         return Err(AppError::Message(format!("Tutor request failed ({status}): {text}")));
     }
     response
@@ -367,6 +388,71 @@ pub async fn fetch_classification(
         .unwrap_or("{}");
     let parsed = json_from_content(content).unwrap_or_else(|_| json!({}));
     suggestion_from_model(image_name, &parsed)
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalTutorStatus {
+    pub id: String,
+    pub running: bool,
+    pub model: String,
+}
+
+pub fn first_model_id(body: &Value) -> Option<String> {
+    let id = body
+        .get("data")?
+        .as_array()?
+        .iter()
+        .find_map(|item| item.get("id").and_then(|value| value.as_str()))?
+        .trim();
+    if id.is_empty() {
+        None
+    } else {
+        Some(id.to_string())
+    }
+}
+
+pub async fn probe_local_tutors() -> Vec<LocalTutorStatus> {
+    const PRESETS: &[(&str, &str, &str)] = &[
+        ("ollama", "http://127.0.0.1:11434/v1", "llama3.2"),
+        ("lmstudio", "http://127.0.0.1:1234/v1", "local-model"),
+        ("llamacpp", "http://127.0.0.1:8080/v1", "local-model"),
+    ];
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(700))
+        .build()
+    else {
+        return PRESETS
+            .iter()
+            .map(|(id, _, model)| LocalTutorStatus {
+                id: (*id).into(),
+                running: false,
+                model: (*model).into(),
+            })
+            .collect();
+    };
+    let mut found = Vec::with_capacity(PRESETS.len());
+    for (id, base, fallback) in PRESETS {
+        let url = format!("{}/models", base.trim_end_matches('/'));
+        let (running, model) = match client.get(&url).send().await {
+            Ok(response) if response.status().is_success() => {
+                let picked = response
+                    .json::<Value>()
+                    .await
+                    .ok()
+                    .and_then(|body| first_model_id(&body))
+                    .unwrap_or_else(|| (*fallback).to_string());
+                (true, picked)
+            }
+            _ => (false, (*fallback).to_string()),
+        };
+        found.push(LocalTutorStatus {
+            id: (*id).into(),
+            running,
+            model,
+        });
+    }
+    found
 }
 
 #[cfg(test)]
@@ -444,5 +530,25 @@ mod tests {
         assert!(cloud.get("response_format").is_some());
         assert!(is_loopback_base("http://localhost:1234/v1"));
         assert!(!is_loopback_base("https://api.openai.com/v1"));
+    }
+
+    #[test]
+    fn keyless_tutor_is_only_the_anonymous_pollinations_host() {
+        assert!(is_keyless_base("https://text.pollinations.ai/openai"));
+        assert!(is_keyless_base("https://text.pollinations.ai/openai/"));
+        assert!(!is_keyless_base("http://text.pollinations.ai/openai"));
+        assert!(!is_keyless_base("https://text.pollinations.ai/openai/chat"));
+        assert!(!is_keyless_base("https://evil.pollinations.ai/openai"));
+        assert!(!is_keyless_base("https://text.pollinations.ai.evil/openai"));
+        let (body, timeout) = body_for(
+            "https://text.pollinations.ai/openai",
+            json!({"model": "openai-fast", "response_format": {"type": "json_object"}}),
+        );
+        assert!(body.get("response_format").is_none());
+        assert!(timeout > 45);
+        assert_eq!(
+            first_model_id(&json!({"data": [{"id": "llama3.2"}, {"id": "other"}]})).as_deref(),
+            Some("llama3.2")
+        );
     }
 }

@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { LOCAL_PRESETS } from "./lib/endpoint.ts";
 import { preview } from "./mockBackend.ts";
-import type { AppView, Level, Schedule, TutorJob, TutorView } from "./types.ts";
+import type { AppView, Level, LocalTutorStatus, Schedule, TutorJob, TutorView } from "./types.ts";
 
 function inTauri() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -20,6 +21,10 @@ export const api = {
     call<AppView>("set_allowlist", { pin, hosts }, () => preview.setAllowlist(pin, hosts)),
   setApiConfig: (pin: string, base: string, model: string) =>
     call<AppView>("set_api_config", { pin, base, model }, () => preview.setApiConfig(pin, base, model)),
+  probeLocalTutors: () =>
+    call<LocalTutorStatus[]>("probe_local_tutors", {}, () =>
+      LOCAL_PRESETS.map((preset) => ({ id: preset.id, running: false, model: preset.model })),
+    ),
   setApiKey: (pin: string, key: string) => call<AppView>("set_api_key", { pin, key }, () => preview.setApiKey(pin, key)),
   startSession: (level: Level, minutes: number, pin: string | null) =>
     call<AppView>("start_session", { level, minutes, pin }, () => preview.startSession(level, minutes, pin)),

@@ -14,15 +14,15 @@ import {
   Timer,
   Trash2,
 } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api.ts";
 import { DIFFICULTIES } from "../games/catalog.ts";
 import { hostKind } from "../hostCatalog.ts";
-import { CLOUD_BASE, CLOUD_MODEL, isLoopbackBase, LOCAL_PRESETS } from "../lib/endpoint.ts";
+import { allowsEmptyKey, CLOUD_BASE, CLOUD_MODEL, FREE_TUTOR, LOCAL_PRESETS } from "../lib/endpoint.ts";
 import { prefsStore } from "../lib/prefs.ts";
 import { toast } from "../lib/toast.ts";
 import type { Theme } from "../theme.ts";
-import type { AppView, Level, Schedule } from "../types.ts";
+import type { AppView, Level, LocalTutorStatus, Schedule } from "../types.ts";
 
 const DAYS = ["M", "T", "W", "T", "F", "S", "S"];
 const DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -348,99 +348,129 @@ function Sites({ view, locked, onSave }: { view: AppView; locked: boolean; onSav
 
 type Save = (action: () => Promise<AppView>, done: string) => Promise<void>;
 
+function tutorChoice(base: string): string {
+  const normalized = base.replace(/\/$/, "");
+  const local = LOCAL_PRESETS.find((preset) => preset.base === normalized);
+  if (local) return local.id;
+  if (normalized === FREE_TUTOR.base) return FREE_TUTOR.id;
+  return "own";
+}
+
 function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean; pin: string; save: Save }) {
+  const [choice, setChoice] = useState(tutorChoice(view.apiBase));
   const [base, setBase] = useState(view.apiBase);
   const [model, setModel] = useState(view.model);
   const [apiKey, setApiKey] = useState("");
-  const local = isLoopbackBase(base);
-  const ready = local || view.hasApiKey;
+  const [probes, setProbes] = useState<LocalTutorStatus[]>([]);
+  const localPreset = LOCAL_PRESETS.find((preset) => preset.id === choice);
+  const probe = probes.find((item) => item.id === choice);
+  const own = choice === "own";
+  const ready = !own || view.hasApiKey || allowsEmptyKey(base);
+
+  useEffect(() => {
+    let cancel = false;
+    api
+      .probeLocalTutors()
+      .then((rows) => {
+        if (!cancel) setProbes(rows);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancel = true;
+    };
+  }, []);
+
+  function selected(): { base: string; model: string } {
+    if (localPreset) return { base: localPreset.base, model: probe?.model || localPreset.model };
+    if (choice === FREE_TUTOR.id) return { base: FREE_TUTOR.base, model: FREE_TUTOR.model };
+    return { base, model };
+  }
+
+  const detail = localPreset
+    ? probe?.running
+      ? `${localPreset.label} is running (${probe.model}). Your notes stay on this computer. No API key. During a session MindVault leaves this app open and closes the other AI apps.`
+      : `Start ${localPreset.label} and leave it open, then save. Your notes stay on this computer. No API key.`
+    : choice === FREE_TUTOR.id
+      ? "No account and no API key. The page you study is sent to Pollinations, which runs a free shared model. About one reply every 30 seconds."
+      : "Paste the address and model from your provider. The key is stored in the system keychain.";
 
   return (
     <Section
       icon={KeyRound}
       title="Tutor"
-      hint="Quizzes, summaries, flashcards, grading, and explain-back. Still buttons only, with no chat box. A cloud key is stored in Windows Credential Manager. A model on this computer needs no key."
+      hint="Pick a name from the list. Quizzes, summaries, flashcards, grading, and explain-back stay as buttons, with no chat box."
     >
-      <div className="mv-segment" role="radiogroup" aria-label="Tutor source">
-        <button
-          type="button"
-          className={local ? "mv-tab" : "mv-tab-on"}
+      <label className="block text-sm text-mv-muted">
+        Tutor
+        <select
+          className="mv-input mt-1"
+          aria-label="Tutor"
+          value={choice}
           disabled={locked}
-          onClick={() => {
-            if (local) {
+          onChange={(event) => {
+            const next = event.target.value;
+            setChoice(next);
+            if (next === "own") {
               setBase(CLOUD_BASE);
               setModel(CLOUD_MODEL);
             }
           }}
         >
-          Cloud API
-        </button>
-        <button
-          type="button"
-          className={local ? "mv-tab-on" : "mv-tab"}
-          disabled={locked}
-          onClick={() => {
-            if (!local) {
-              setBase(LOCAL_PRESETS[0].base);
-              setModel(LOCAL_PRESETS[0].model);
-            }
-          }}
-        >
-          On this computer
-        </button>
-      </div>
+          <optgroup label="On this computer">
+            {LOCAL_PRESETS.map((preset) => (
+              <option key={preset.id} value={preset.id}>
+                {preset.label}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Free online">
+            <option value={FREE_TUTOR.id}>{FREE_TUTOR.label}</option>
+          </optgroup>
+          <optgroup label="Your own account">
+            <option value="own">I have an API key</option>
+          </optgroup>
+        </select>
+      </label>
       <span
         className={`mt-4 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
           ready ? "bg-mv-good/15 text-mv-good" : "bg-mv-warn/15 text-mv-warn"
         }`}
       >
         <span className={`size-1.5 rounded-full ${ready ? "bg-mv-good" : "bg-mv-warn"}`} />
-        {local ? (view.hasApiKey ? "Saved key is sent to this address" : "Local model, no key") : view.hasApiKey ? "Key saved" : "No key yet"}
+        {own ? (view.hasApiKey ? "Key saved" : "No key yet") : "No API key"}
       </span>
-      {local ? (
-        <div className="mt-4 flex flex-wrap gap-2">
-          {LOCAL_PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              type="button"
-              className={base.replace(/\/$/, "") === preset.base ? "mv-chip border-mv-accent bg-mv-accent/15 font-semibold" : "mv-chip"}
-              disabled={locked}
-              onClick={() => {
-                setBase(preset.base);
-                setModel(preset.model);
-              }}
-            >
-              {preset.label}
-            </button>
-          ))}
+      <p className="mt-3 text-xs leading-relaxed text-mv-muted">{detail}</p>
+      {own ? (
+        <div className="mt-4 grid gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm text-mv-muted">
+              API base
+              <input className="mv-input mt-1" value={base} disabled={locked} onChange={(event) => setBase(event.target.value)} />
+            </label>
+            <label className="block text-sm text-mv-muted">
+              Model
+              <input className="mv-input mt-1" value={model} disabled={locked} onChange={(event) => setModel(event.target.value)} />
+            </label>
+          </div>
+          <label className="block text-sm text-mv-muted">
+            API key
+            <input type="password" className="mv-input mt-1" value={apiKey} disabled={locked} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" />
+          </label>
         </div>
       ) : null}
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <label className="block text-sm text-mv-muted">
-          API base
-          <input className="mv-input mt-1" value={base} disabled={locked} onChange={(event) => setBase(event.target.value)} />
-        </label>
-        <label className="block text-sm text-mv-muted">
-          Model
-          <input className="mv-input mt-1" value={model} disabled={locked} onChange={(event) => setModel(event.target.value)} />
-        </label>
-      </div>
-      {local ? (
-        <p className="mt-3 text-xs leading-relaxed text-mv-muted">
-          Use an OpenAI-compatible server. Ollama is <span className="font-mono">http://127.0.0.1:11434/v1</span> (the name from{" "}
-          <span className="font-mono">ollama list</span>). LM Studio is <span className="font-mono">http://127.0.0.1:1234/v1</span> and the model name shown for the loaded model. Start that server before a session. While locked, only the one you saved here stays open. LM Studio is closed when the tutor is Ollama or a cloud key, and <span className="font-mono">ollama run</span> is always closed. Plain http is allowed only for this computer.
-        </p>
-      ) : (
-        <label className="mt-3 block text-sm text-mv-muted">
-          API key
-          <input type="password" className="mv-input mt-1" value={apiKey} disabled={locked} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" />
-        </label>
-      )}
       <div className="mt-4 flex flex-wrap gap-2">
-        <button type="button" className="mv-btn" disabled={locked} onClick={() => void save(() => api.setApiConfig(pin, base, model), local ? "Local tutor saved." : "Endpoint saved.")}>
-          <Lock className="size-4" /> {local ? "Save local tutor" : "Save endpoint"}
+        <button
+          type="button"
+          className="mv-btn"
+          disabled={locked}
+          onClick={() => {
+            const next = selected();
+            void save(() => api.setApiConfig(pin, next.base, next.model), "Tutor saved.");
+          }}
+        >
+          <Lock className="size-4" /> Save tutor
         </button>
-        {!local ? (
+        {own ? (
           <button
             type="button"
             className="mv-btn-ghost"
@@ -456,7 +486,7 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
             Save key with PIN
           </button>
         ) : null}
-        {view.hasApiKey ? (
+        {view.hasApiKey && own ? (
           <button type="button" className="mv-btn-ghost" disabled={locked} onClick={() => void save(() => api.setApiKey(pin, ""), "API key removed.")}>
             Remove saved key
           </button>
@@ -472,7 +502,7 @@ function Classify({ view, locked, pin, save }: { view: AppView; locked: boolean;
   const [publisher, setPublisher] = useState("");
 
   return (
-    <Section icon={Cpu} title="Block another program" hint="The tutor classifies it, using the cloud key or the local model. Accepting adds it to the next session. Protected Windows programs are refused.">
+    <Section icon={Cpu} title="Block another program" hint="The tutor you saved classifies it. Accepting adds it to the next session. Protected system programs are refused.">
       <div className="grid gap-2 sm:grid-cols-3">
         <input placeholder="name.exe" aria-label="Program file name" className="mv-input" value={imageName} disabled={locked} onChange={(event) => setImageName(event.target.value)} />
         <input placeholder="Path (optional)" aria-label="Path" className="mv-input" value={path} disabled={locked} onChange={(event) => setPath(event.target.value)} />

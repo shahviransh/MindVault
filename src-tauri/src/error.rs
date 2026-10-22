@@ -24,7 +24,7 @@ pub enum AppError {
     RecoveryNotSaved,
     #[error("Set a PIN before starting a Standard or Full session.")]
     PinRequired,
-    #[error("A cloud tutor needs an API key. A model on this computer does not. Reading and the skill games still work.")]
+    #[error("Choose a tutor from the list, or save an API key. Reading and the skill games still work.")]
     NoKey,
     #[error("That request is not a study action.")]
     Freeform,

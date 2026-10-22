@@ -1,5 +1,5 @@
 import { DEFAULT_ALLOW_HOSTS } from "./hostCatalog.ts";
-import { isLoopbackBase } from "./lib/endpoint.ts";
+import { allowsEmptyKey, FREE_TUTOR } from "./lib/endpoint.ts";
 import { dayKey } from "./lib/rng.ts";
 import type { AppView, Level, Schedule, TutorJob, TutorView } from "./types.ts";
 
@@ -42,8 +42,8 @@ function blank(): MockState {
     enrolled: false,
     recoveryAcknowledged: false,
     hasApiKey: false,
-    apiBase: "https://api.openai.com/v1",
-    model: "gpt-4o-mini",
+    apiBase: FREE_TUTOR.base,
+    model: FREE_TUTOR.model,
     allowHosts: DEFAULT_ALLOW_HOSTS.slice(),
     denyHosts: DENY.slice(),
     customBlocks: [],
@@ -201,7 +201,7 @@ export const preview = {
   setApiConfig(pin: string, base: string, model: string): AppView {
     const state = load();
     requirePin(state, pin);
-    if (!base.trim().startsWith("https:") && !isLoopbackBase(base)) {
+    if (!base.trim().startsWith("https:") && !allowsEmptyKey(base)) {
       throw new Error("Use https, or http only for localhost.");
     }
     state.apiBase = base.replace(/\/$/, "");
@@ -291,8 +291,8 @@ export const preview = {
     if ("prompt" in job || "messages" in job) throw new Error("That request is not a study action.");
     const state = load();
     if (!state.session) throw new Error("The tutor is available during a session.");
-    if (!state.hasApiKey && !isLoopbackBase(state.apiBase)) {
-      throw new Error("A cloud tutor needs an API key. A model on this computer does not. Reading and the skill games still work.");
+    if (!state.hasApiKey && !allowsEmptyKey(state.apiBase)) {
+      throw new Error("Choose a tutor from the list, or save an API key. Reading and the skill games still work.");
     }
     if (job.job === "grade") {
       return {
@@ -345,8 +345,8 @@ export const preview = {
   classify(imageName: string): AppView {
     const state = load();
     if (state.session) throw new Error("Classify programs before a session starts.");
-    if (!state.hasApiKey && !isLoopbackBase(state.apiBase)) {
-      throw new Error("A cloud tutor needs an API key. A model on this computer does not. Reading and the skill games still work.");
+    if (!state.hasApiKey && !allowsEmptyKey(state.apiBase)) {
+      throw new Error("Choose a tutor from the list, or save an API key. Reading and the skill games still work.");
     }
     const image = imageName.trim().toLowerCase();
     if (!image.endsWith(".exe") || image === "taskmgr.exe" || image === "explorer.exe") {

@@ -10,7 +10,7 @@ const STEPS = [
   {
     icon: BookOpen,
     title: "Study without shortcuts",
-    body: "The study desk opens only sites on your list, in MindVault's own browser. Quizzes, summaries, and flashcards use a cloud API key or a model running on this computer. There is no chat box.",
+    body: "The study desk opens only sites on your list, in MindVault's own browser. Quizzes, summaries, and flashcards use a tutor you pick from a list. The free choices need no API key. There is no chat box.",
   },
   {
     icon: Gamepad2,
