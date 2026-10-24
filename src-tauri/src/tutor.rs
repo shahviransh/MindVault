@@ -256,16 +256,38 @@ pub fn is_loopback_base(base: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The anonymous Pollinations text endpoint. Any other https host still needs a key.
+struct KeylessTutor {
+    host: &'static str,
+    path: &'static str,
+    /// DevToolBox takes `{prompt}` instead of an OpenAI chat body.
+    prompt: bool,
+}
+
+const KEYLESS_TUTORS: &[KeylessTutor] = &[
+    KeylessTutor { host: "text.pollinations.ai", path: "/openai", prompt: false },
+    KeylessTutor { host: "ai-gateway.kilo.ai", path: "/api/v1", prompt: false },
+    KeylessTutor {
+        host: "devtoolbox-api.devtoolbox-api.workers.dev",
+        path: "/ai/generate",
+        prompt: true,
+    },
+];
+
+fn keyless_tutor(base: &str) -> Option<&'static KeylessTutor> {
+    let url = url::Url::parse(base.trim()).ok()?;
+    if url.scheme() != "https" || url.port().is_some() || url.query().is_some() {
+        return None;
+    }
+    let host = url.host_str()?;
+    let path = url.path().trim_end_matches('/');
+    KEYLESS_TUTORS
+        .iter()
+        .find(|tutor| host.eq_ignore_ascii_case(tutor.host) && path == tutor.path)
+}
+
+/// Anonymous tutors on the dropdown. Any other https host still needs a key.
 pub fn is_keyless_base(base: &str) -> bool {
-    let Ok(url) = url::Url::parse(base.trim()) else {
-        return false;
-    };
-    url.scheme() == "https"
-        && url.host_str().is_some_and(|host| host.eq_ignore_ascii_case("text.pollinations.ai"))
-        && url.port().is_none()
-        && url.path().trim_end_matches('/') == "/openai"
-        && url.query().is_none()
+    keyless_tutor(base).is_some()
 }
 
 pub fn allows_empty_key(base: &str) -> bool {
@@ -321,7 +343,72 @@ pub fn content_from_response(body: &Value) -> AppResult<TutorView> {
     Ok(view_from_model(&json_from_content(content)?))
 }
 
+pub fn openai_from_prompt(body: &Value) -> AppResult<Value> {
+    let response = body
+        .get("response")
+        .ok_or_else(|| AppError::Message("The tutor returned an empty response.".into()))?;
+    let content = match response {
+        Value::String(text) => text.clone(),
+        other => serde_json::to_string(other).map_err(|err| AppError::Message(err.to_string()))?,
+    };
+    if content.trim().is_empty() {
+        return Err(AppError::Message("The tutor returned an empty response.".into()));
+    }
+    Ok(json!({ "choices": [{ "message": { "content": content } }] }))
+}
+
+fn prompt_from_body(body: &Value) -> String {
+    body.get("messages")
+        .and_then(|messages| messages.as_array())
+        .map(|messages| {
+            messages
+                .iter()
+                .filter_map(|message| message.get("content").and_then(|content| content.as_str()))
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        })
+        .unwrap_or_default()
+}
+
+async fn post_prompt(base: &str, body: &Value, timeout_secs: u64) -> AppResult<Value> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(timeout_secs))
+        .build()
+        .map_err(|err| AppError::Message(err.to_string()))?;
+    let response = client
+        .post(base.trim_end_matches('/'))
+        .json(&json!({ "prompt": prompt_from_body(body), "max_tokens": 800 }))
+        .send()
+        .await
+        .map_err(|err| AppError::Message(err.to_string()))?;
+    let payload = read_tutor_response(response).await?;
+    openai_from_prompt(&payload)
+}
+
+async fn read_tutor_response(response: reqwest::Response) -> AppResult<Value> {
+    if !response.status().is_success() {
+        let status = response.status();
+        let text = response.text().await.unwrap_or_default();
+        if status.as_u16() == 402 || text.contains("FREE_LIMIT") {
+            return Err(AppError::Message(
+                "This free tutor allows about one reply every 30 seconds. Wait a moment and try again.".into(),
+            ));
+        }
+        if status.as_u16() == 429 {
+            return Err(AppError::Message("This free tutor is busy. Wait a moment and try again.".into()));
+        }
+        return Err(AppError::Message(format!("Tutor request failed ({status}): {text}")));
+    }
+    response
+        .json()
+        .await
+        .map_err(|err| AppError::Message(err.to_string()))
+}
+
 async fn post_chat(base: &str, key: &str, body: &Value, timeout_secs: u64) -> AppResult<Value> {
+    if keyless_tutor(base).is_some_and(|tutor| tutor.prompt) {
+        return post_prompt(base, body, timeout_secs).await;
+    }
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
@@ -333,20 +420,7 @@ async fn post_chat(base: &str, key: &str, body: &Value, timeout_secs: u64) -> Ap
         .send()
         .await
         .map_err(|err| AppError::Message(err.to_string()))?;
-    if !response.status().is_success() {
-        let status = response.status();
-        let text = response.text().await.unwrap_or_default();
-        if status.as_u16() == 402 || text.contains("FREE_LIMIT") {
-            return Err(AppError::Message(
-                "The free online tutor allows about one reply every 30 seconds. Wait a moment and try again.".into(),
-            ));
-        }
-        return Err(AppError::Message(format!("Tutor request failed ({status}): {text}")));
-    }
-    response
-        .json()
-        .await
-        .map_err(|err| AppError::Message(err.to_string()))
+    read_tutor_response(response).await
 }
 
 pub async fn fetch_tutor(base: &str, key: &str, model: &str, job: &TutorJob) -> AppResult<TutorView> {
@@ -533,13 +607,19 @@ mod tests {
     }
 
     #[test]
-    fn keyless_tutor_is_only_the_anonymous_pollinations_host() {
+    fn keyless_tutors_are_only_the_checked_hosts() {
         assert!(is_keyless_base("https://text.pollinations.ai/openai"));
         assert!(is_keyless_base("https://text.pollinations.ai/openai/"));
+        assert!(is_keyless_base("https://ai-gateway.kilo.ai/api/v1"));
+        assert!(is_keyless_base("https://devtoolbox-api.devtoolbox-api.workers.dev/ai/generate"));
         assert!(!is_keyless_base("http://text.pollinations.ai/openai"));
         assert!(!is_keyless_base("https://text.pollinations.ai/openai/chat"));
         assert!(!is_keyless_base("https://evil.pollinations.ai/openai"));
         assert!(!is_keyless_base("https://text.pollinations.ai.evil/openai"));
+        assert!(!is_keyless_base("https://api.kilo.ai/api/gateway"));
+        assert!(!is_keyless_base("https://ai-gateway.kilo.ai/api/v1/chat/completions"));
+        let wrapped = openai_from_prompt(&json!({"response": {"questions": [{"prompt": "Q"}]}})).unwrap();
+        assert_eq!(wrapped.pointer("/choices/0/message/content").and_then(|value| value.as_str()), Some("{\"questions\":[{\"prompt\":\"Q\"}]}"));
         let (body, timeout) = body_for(
             "https://text.pollinations.ai/openai",
             json!({"model": "openai-fast", "response_format": {"type": "json_object"}}),

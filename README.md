@@ -35,7 +35,7 @@ You can edit that list in Settings. The list in effect when you press Start is t
 
 ## Tutor
 
-Settings has a tutor dropdown. A new install uses the free online model, which needs no account and no API key. The page you study is sent to Pollinations, and that service allows about one reply every 30 seconds. The same list includes Ollama, LM Studio, and llama.cpp on this computer. Those keep your notes local and need no key. "I have an API key" is for a provider address of your own. That key is stored in the system keychain (Windows Credential Manager on Windows).
+Settings has a tutor dropdown. A new install uses Pollinations, which needs no account and no API key. The same free list includes Kilo Auto and DevToolBox. The page you study is sent to whichever of those you pick. The list also includes Ollama, LM Studio, and llama.cpp on this computer. Those keep your notes local and need no key. "I have an API key" is for a provider address of your own. That key is stored in the system keychain (Windows Credential Manager on Windows).
 
 Plain `http` is allowed only for `localhost`, `127.0.0.1`, and `::1`. A saved cloud key is not sent to the free online tutor.
 

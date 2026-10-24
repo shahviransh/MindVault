@@ -18,11 +18,12 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api.ts";
 import { DIFFICULTIES } from "../games/catalog.ts";
 import { hostKind } from "../hostCatalog.ts";
-import { allowsEmptyKey, CLOUD_BASE, CLOUD_MODEL, FREE_TUTOR, LOCAL_PRESETS } from "../lib/endpoint.ts";
+import { allowsEmptyKey, CLOUD_BASE, CLOUD_MODEL, FREE_TUTORS, LOCAL_PRESETS } from "../lib/endpoint.ts";
 import { prefsStore } from "../lib/prefs.ts";
 import { toast } from "../lib/toast.ts";
 import type { Theme } from "../theme.ts";
 import type { AppView, Level, LocalTutorStatus, Schedule } from "../types.ts";
+import { MenuSelect } from "../ui/MenuSelect.tsx";
 
 const DAYS = ["M", "T", "W", "T", "F", "S", "S"];
 const DAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -268,17 +269,22 @@ function Schedules({ view, locked, onSave }: { view: AppView; locked: boolean; o
               />
               min
             </label>
-            <select
-              aria-label="Level"
-              className="mv-input w-32 py-1.5 capitalize"
+            <MenuSelect
+              className="w-36"
+              label="Level"
               value={item.level}
               disabled={locked}
-              onChange={(event) => edit(index, { level: event.target.value as Level })}
-            >
-              <option value="light">Light</option>
-              <option value="standard">Standard</option>
-              <option value="full">Full</option>
-            </select>
+              groups={[
+                {
+                  options: [
+                    { value: "light", label: "Light" },
+                    { value: "standard", label: "Standard" },
+                    { value: "full", label: "Full" },
+                  ],
+                },
+              ]}
+              onChange={(level) => edit(index, { level: level as Level })}
+            />
             <button
               type="button"
               className="mv-icon-btn ml-auto size-9 hover:border-mv-bad/50 hover:bg-mv-bad/10 hover:text-mv-bad"
@@ -352,7 +358,8 @@ function tutorChoice(base: string): string {
   const normalized = base.replace(/\/$/, "");
   const local = LOCAL_PRESETS.find((preset) => preset.base === normalized);
   if (local) return local.id;
-  if (normalized === FREE_TUTOR.base) return FREE_TUTOR.id;
+  const free = FREE_TUTORS.find((tutor) => tutor.base === normalized);
+  if (free) return free.id;
   return "own";
 }
 
@@ -361,8 +368,10 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
   const [base, setBase] = useState(view.apiBase);
   const [model, setModel] = useState(view.model);
   const [apiKey, setApiKey] = useState("");
+  const [tutorPin, setTutorPin] = useState("");
   const [probes, setProbes] = useState<LocalTutorStatus[]>([]);
   const localPreset = LOCAL_PRESETS.find((preset) => preset.id === choice);
+  const freeTutor = FREE_TUTORS.find((tutor) => tutor.id === choice);
   const probe = probes.find((item) => item.id === choice);
   const own = choice === "own";
   const ready = !own || view.hasApiKey || allowsEmptyKey(base);
@@ -382,7 +391,7 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
 
   function selected(): { base: string; model: string } {
     if (localPreset) return { base: localPreset.base, model: probe?.model || localPreset.model };
-    if (choice === FREE_TUTOR.id) return { base: FREE_TUTOR.base, model: FREE_TUTOR.model };
+    if (freeTutor) return { base: freeTutor.base, model: freeTutor.model };
     return { base, model };
   }
 
@@ -390,8 +399,8 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
     ? probe?.running
       ? `${localPreset.label} is running (${probe.model}). Your notes stay on this computer. No API key. During a session MindVault leaves this app open and closes the other AI apps.`
       : `Start ${localPreset.label} and leave it open, then save. Your notes stay on this computer. No API key.`
-    : choice === FREE_TUTOR.id
-      ? "No account and no API key. The page you study is sent to Pollinations, which runs a free shared model. About one reply every 30 seconds."
+    : freeTutor
+      ? freeTutor.detail
       : "Paste the address and model from your provider. The key is stored in the system keychain.";
 
   return (
@@ -400,37 +409,27 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
       title="Tutor"
       hint="Pick a name from the list. Quizzes, summaries, flashcards, grading, and explain-back stay as buttons, with no chat box."
     >
-      <label className="block text-sm text-mv-muted">
-        Tutor
-        <select
-          className="mv-input mt-1"
-          aria-label="Tutor"
+      <div>
+        <p className="text-sm text-mv-muted">Tutor</p>
+        <MenuSelect
+          className="mt-1"
+          label="Tutor"
           value={choice}
           disabled={locked}
-          onChange={(event) => {
-            const next = event.target.value;
+          groups={[
+            { label: "On this computer", options: LOCAL_PRESETS.map((preset) => ({ value: preset.id, label: preset.label })) },
+            { label: "Free online", options: FREE_TUTORS.map((tutor) => ({ value: tutor.id, label: tutor.label })) },
+            { label: "Your own account", options: [{ value: "own", label: "I have an API key" }] },
+          ]}
+          onChange={(next) => {
             setChoice(next);
             if (next === "own") {
               setBase(CLOUD_BASE);
               setModel(CLOUD_MODEL);
             }
           }}
-        >
-          <optgroup label="On this computer">
-            {LOCAL_PRESETS.map((preset) => (
-              <option key={preset.id} value={preset.id}>
-                {preset.label}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Free online">
-            <option value={FREE_TUTOR.id}>{FREE_TUTOR.label}</option>
-          </optgroup>
-          <optgroup label="Your own account">
-            <option value="own">I have an API key</option>
-          </optgroup>
-        </select>
-      </label>
+        />
+      </div>
       <span
         className={`mt-4 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${
           ready ? "bg-mv-good/15 text-mv-good" : "bg-mv-warn/15 text-mv-warn"
@@ -458,14 +457,26 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
           </label>
         </div>
       ) : null}
-      <div className="mt-4 flex flex-wrap gap-2">
+      <div className="mt-4 flex flex-wrap items-end gap-2">
+        <label className="block text-sm text-mv-muted">
+          PIN
+          <input
+            type="password"
+            aria-label="PIN to save the tutor"
+            className="ml-1 mv-input mt-1 w-40"
+            value={tutorPin}
+            disabled={locked}
+            autoComplete="off"
+            onChange={(event) => setTutorPin(event.target.value)}
+          />
+        </label>
         <button
           type="button"
           className="mv-btn"
           disabled={locked}
           onClick={() => {
             const next = selected();
-            void save(() => api.setApiConfig(pin, next.base, next.model), "Tutor saved.");
+            void save(() => api.setApiConfig(tutorPin || pin, next.base, next.model), "Tutor saved.");
           }}
         >
           <Lock className="size-4" /> Save tutor
@@ -477,7 +488,7 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
             disabled={locked}
             onClick={() =>
               void save(async () => {
-                const next = await api.setApiKey(pin, apiKey);
+                const next = await api.setApiKey(tutorPin || pin, apiKey);
                 setApiKey("");
                 return next;
               }, "API key saved.")
