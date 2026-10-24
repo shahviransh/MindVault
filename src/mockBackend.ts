@@ -73,6 +73,78 @@ function save(state: MockState) {
   localStorage.setItem(KEY, JSON.stringify(state));
 }
 
+function sourceLines(source: string): string[] {
+  const lines = source
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .slice(0, 4);
+  if (lines.length > 0) return lines;
+  const trimmed = source.trim();
+  return trimmed ? [trimmed.slice(0, 280)] : [];
+}
+
+const NOT_IN_TEXT = ["This is not in the text.", "The text says something else.", "None of the notes mention this."];
+
+function questionsFrom(source: string): TutorView["questions"] {
+  return sourceLines(source).map((line, index) => {
+    const answerIndex = index % 4;
+    const choices = [...NOT_IN_TEXT];
+    choices.splice(answerIndex, 0, line);
+    return {
+      prompt: `Which statement is in the text you pasted? (${index + 1})`,
+      choices: choices.slice(0, 4),
+      answerIndex,
+    };
+  });
+}
+
+function previewTutor(job: TutorJob): TutorView {
+  const empty: TutorView = { summary: null, questions: [], cards: [], grade: null, gaps: [], followUp: null };
+  if (job.job === "grade") {
+    const answer = job.answer.trim();
+    const mentioned = answer.length > 0 && job.question.toLowerCase().split(/\W+/).some((word) => word.length > 3 && answer.toLowerCase().includes(word));
+    return {
+      ...empty,
+      grade: {
+        correct: mentioned,
+        explanation: mentioned
+          ? "The answer uses a word from the question. The desktop app asks the tutor you saved."
+          : "The answer does not use the question. The desktop app asks the tutor you saved.",
+      },
+    };
+  }
+  if (job.job === "flashcards") {
+    return {
+      ...empty,
+      cards: sourceLines(job.source).map((line) => ({
+        front: `${line.split(" ").slice(0, 5).join(" ")} …`,
+        back: line,
+      })),
+    };
+  }
+  if (job.job === "explainBack") {
+    const words = job.source
+      .toLowerCase()
+      .split(/\W+/)
+      .filter((word) => word.length > 4);
+    const explanation = job.explanation.toLowerCase();
+    const missed = words.filter((word) => !explanation.includes(word)).slice(0, 4);
+    return {
+      ...empty,
+      gaps: missed.length > 0 ? missed.map((word) => `The text mentions “${word},” and the explanation does not.`) : ["The explanation covers the words in the text."],
+      followUp: sourceLines(job.source)[0] ? `What else does this sentence leave out: ${sourceLines(job.source)[0]}` : null,
+    };
+  }
+  const lines = sourceLines(job.source);
+  return {
+    ...empty,
+    summary: job.job === "summarizeThenQuiz" ? lines.join(" ") : null,
+    questions: questionsFrom(job.source),
+  };
+}
+
 function view(state: MockState): AppView {
   const { pin: _pin, recoveryKey: _key, scheduleFired: _fired, ...rest } = state;
   return rest;
@@ -294,53 +366,7 @@ export const preview = {
     if (!state.hasApiKey && !allowsEmptyKey(state.apiBase)) {
       throw new Error("Choose a tutor from the list, or save an API key. Reading and the skill games still work.");
     }
-    if (job.job === "grade") {
-      return {
-        summary: null,
-        questions: [],
-        cards: [],
-        grade: { correct: job.answer.trim().length > 0, explanation: "Preview grade. The desktop app calls your API." },
-        gaps: [],
-        followUp: null,
-      };
-    }
-    if (job.job === "flashcards") {
-      return {
-        summary: null,
-        questions: [],
-        cards: [
-          { front: "What should you do first?", back: "Attempt the question before reading the answer." },
-          { front: "Where does the summary stay?", back: "Hidden until a quiz answer is in." },
-        ],
-        grade: null,
-        gaps: [],
-        followUp: null,
-      };
-    }
-    if (job.job === "explainBack") {
-      return {
-        summary: null,
-        questions: [],
-        cards: [],
-        grade: null,
-        gaps: ["Name the mechanism, not only the result."],
-        followUp: "What would change if that cause were removed?",
-      };
-    }
-    return {
-      summary: job.job === "summarizeThenQuiz" ? "Preview summary of your source. It stays hidden until you answer." : null,
-      questions: [
-        {
-          prompt: "Which habit keeps the work in your head?",
-          choices: ["Asking a model to finish it", "Answering before the summary is shown", "Opening a chat window"],
-          answerIndex: 1,
-        },
-      ],
-      cards: [],
-      grade: null,
-      gaps: [],
-      followUp: null,
-    };
+    return previewTutor(job);
   },
   classify(imageName: string): AppView {
     const state = load();

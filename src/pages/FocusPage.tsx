@@ -272,8 +272,11 @@ function TutorResult({ result, onSolved }: { result: TutorView; onSolved: () => 
           </button>
         )
       ) : null}
+      {result.questions.length === 0 && result.cards.length === 0 && !result.summary && !result.grade && result.gaps.length === 0 && !result.followUp ? (
+        <p className="text-sm text-mv-muted">The tutor did not return a quiz, summary, or cards from that text. Try again.</p>
+      ) : null}
       {result.questions.map((item, questionIndex) => (
-        <article key={item.prompt} className="rounded-2xl border border-mv-line bg-mv-field p-4">
+        <article key={`${questionIndex}-${item.prompt}`} className="rounded-2xl border border-mv-line bg-mv-field p-4">
           <h3 className="text-sm font-semibold">{item.prompt}</h3>
           <div className="mt-3 flex flex-col gap-2">
             {item.choices.map((choice, index) => {
@@ -306,7 +309,7 @@ function TutorResult({ result, onSolved }: { result: TutorView; onSolved: () => 
         <div className="grid gap-2 sm:grid-cols-2">
           {result.cards.map((card, index) => (
             <button
-              key={card.front}
+              key={`${index}-${card.front}`}
               type="button"
               className={`mv-card-flip ${flipped.has(index) ? "border-mv-accent/50 bg-mv-accent/10" : ""}`}
               onClick={() =>
@@ -332,8 +335,8 @@ function TutorResult({ result, onSolved }: { result: TutorView; onSolved: () => 
       ) : null}
       {result.gaps.length > 0 ? (
         <ul className="space-y-2 text-sm">
-          {result.gaps.map((gap) => (
-            <li key={gap} className="flex gap-2">
+          {result.gaps.map((gap, index) => (
+            <li key={`${index}-${gap}`} className="flex gap-2">
               <span className="mt-1.5 size-1.5 shrink-0 rounded-full bg-mv-warn" />
               {gap}
             </li>

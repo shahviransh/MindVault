@@ -81,19 +81,43 @@ fn require_text(value: &str) -> AppResult<()> {
 pub fn request_body(job: &TutorJob, model: &str) -> Value {
     let instruction = match job {
         TutorJob::Quiz { source } => format!(
-            "JOB: quiz\nSOURCE:\n---\n{source}\n---\nReturn JSON {{\"questions\":[{{\"prompt\":\"\",\"choices\":[\"\"],\"answerIndex\":0}}]}}"
+            "Write 3 multiple-choice questions that can be answered only from SOURCE. \
+Do not add facts SOURCE does not state. \
+Return one JSON object and no other text:\n\
+{{\"questions\":[{{\"prompt\":\"question whose answer is stated in SOURCE\",\"choices\":[\"quote from SOURCE\",\"different quote from SOURCE\",\"not in SOURCE\",\"not in SOURCE\"],\"answerIndex\":0}}]}}\n\
+Each question needs 4 choices. answerIndex is the correct choice, counting from 0. \
+The correct choice must quote SOURCE. Do not leave any string empty, and do not copy this sample.\n\
+SOURCE:\n---\n{source}\n---"
         ),
         TutorJob::SummarizeThenQuiz { source } => format!(
-            "JOB: summarizeThenQuiz\nSOURCE:\n---\n{source}\n---\nReturn JSON {{\"summary\":\"\",\"questions\":[{{\"prompt\":\"\",\"choices\":[\"\"],\"answerIndex\":0}}]}}"
+            "Summarize SOURCE in two sentences, then write 3 multiple-choice questions that can be answered only from SOURCE. \
+Do not add facts SOURCE does not state. \
+Return one JSON object and no other text:\n\
+{{\"summary\":\"two sentences using only SOURCE\",\"questions\":[{{\"prompt\":\"question whose answer is stated in SOURCE\",\"choices\":[\"quote from SOURCE\",\"different quote from SOURCE\",\"not in SOURCE\",\"not in SOURCE\"],\"answerIndex\":0}}]}}\n\
+The correct choice must quote SOURCE. Do not leave any string empty, and do not copy this sample.\n\
+SOURCE:\n---\n{source}\n---"
         ),
         TutorJob::Flashcards { source } => format!(
-            "JOB: flashcards\nSOURCE:\n---\n{source}\n---\nReturn JSON {{\"cards\":[{{\"front\":\"\",\"back\":\"\"}}]}}"
+            "Write 4 flashcards that can be answered only from SOURCE. \
+Do not add facts SOURCE does not state. \
+Return one JSON object and no other text:\n\
+{{\"cards\":[{{\"front\":\"question about SOURCE\",\"back\":\"quote from SOURCE\"}}]}}\n\
+The back of every card must quote SOURCE. Do not leave any string empty, and do not copy this sample.\n\
+SOURCE:\n---\n{source}\n---"
         ),
         TutorJob::Grade { question, answer } => format!(
-            "JOB: grade\nQUESTION:\n---\n{question}\n---\nANSWER:\n---\n{answer}\n---\nReturn JSON {{\"correct\":true,\"explanation\":\"\"}}"
+            "Grade the answer to the question. \
+Return one JSON object and no other text:\n\
+{{\"correct\":true,\"explanation\":\"why, using the question and the answer\"}}\n\
+Do not leave explanation empty.\n\
+QUESTION:\n---\n{question}\n---\nANSWER:\n---\n{answer}\n---"
         ),
         TutorJob::ExplainBack { source, explanation } => format!(
-            "JOB: explainBack\nSOURCE:\n---\n{source}\n---\nEXPLANATION:\n---\n{explanation}\n---\nReturn JSON {{\"gaps\":[\"\"],\"followUp\":\"\"}}"
+            "Compare EXPLANATION with SOURCE. List facts from SOURCE that EXPLANATION missed, then ask one follow-up that SOURCE can answer. \
+Return one JSON object and no other text:\n\
+{{\"gaps\":[\"a fact from SOURCE that was missed\"],\"followUp\":\"one question SOURCE can answer\"}}\n\
+Do not leave any string empty, and do not copy this sample.\n\
+SOURCE:\n---\n{source}\n---\nEXPLANATION:\n---\n{explanation}\n---"
         ),
     };
     json!({
@@ -111,6 +135,9 @@ pub fn request_body(job: &TutorJob, model: &str) -> Value {
 }
 
 pub fn view_from_model(raw: &Value) -> TutorView {
+    if let Some(items) = raw.as_array() {
+        return view_from_model(&json!({ "questions": items }));
+    }
     let summary = raw
         .get("summary")
         .and_then(|value| value.as_str())
@@ -134,13 +161,9 @@ pub fn view_from_model(raw: &Value) -> TutorView {
             items
                 .iter()
                 .filter_map(|item| {
-                    let front = item.get("front")?.as_str()?.trim().to_string();
-                    let back = item.get("back")?.as_str()?.trim().to_string();
-                    if front.is_empty() || back.is_empty() {
-                        None
-                    } else {
-                        Some(Card { front, back })
-                    }
+                    let front = text_field(item, &["front", "question", "prompt"])?;
+                    let back = text_field(item, &["back", "answer", "response"])?;
+                    Some(Card { front, back })
                 })
                 .take(20)
                 .collect::<Vec<_>>()
@@ -181,30 +204,87 @@ pub fn view_from_model(raw: &Value) -> TutorView {
     }
 }
 
-fn parse_question(value: &Value) -> Option<Question> {
-    let prompt = value.get("prompt")?.as_str()?.trim().to_string();
-    if prompt.is_empty() {
-        return None;
+fn text_field(value: &Value, names: &[&str]) -> Option<String> {
+    names.iter().find_map(|name| {
+        let text = value.get(*name)?.as_str()?.trim();
+        if text.is_empty() {
+            None
+        } else {
+            Some(text.to_string())
+        }
+    })
+}
+
+fn string_list(value: &Value) -> Option<Vec<String>> {
+    let items = value.as_array()?;
+    let choices = items
+        .iter()
+        .filter_map(|item| match item {
+            Value::String(text) => {
+                let trimmed = text.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                }
+            }
+            Value::Object(_) => text_field(item, &["text", "label", "value", "choice"]),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if choices.is_empty() {
+        None
+    } else {
+        Some(choices)
     }
+}
+
+fn json_index(value: &Value) -> Option<usize> {
+    match value {
+        Value::Number(number) => number.as_u64().map(|number| number as usize),
+        Value::String(text) => text.trim().parse().ok(),
+        _ => None,
+    }
+}
+
+fn answer_index(value: &Value, choices: &[String]) -> usize {
+    for name in ["answerIndex", "correctIndex", "correct_index"] {
+        if let Some(index) = value.get(name).and_then(json_index) {
+            return if index < choices.len() { index } else { 0 };
+        }
+    }
+    let Some(label) = text_field(value, &["answer", "correctAnswer", "correct"]) else {
+        return 0;
+    };
+    if let Ok(index) = label.parse::<usize>() {
+        return if index < choices.len() { index } else { 0 };
+    }
+    if label.len() == 1 {
+        let letter = label.chars().next().unwrap_or(' ').to_ascii_uppercase();
+        if letter.is_ascii_uppercase() {
+            let index = (letter as u8 - b'A') as usize;
+            if index < choices.len() {
+                return index;
+            }
+        }
+    }
+    choices
+        .iter()
+        .position(|choice| choice.eq_ignore_ascii_case(&label))
+        .unwrap_or(0)
+}
+
+fn parse_question(value: &Value) -> Option<Question> {
+    let prompt = text_field(value, &["prompt", "question", "q"])?;
     let choices = value
         .get("choices")
-        .and_then(|item| item.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(|choice| choice.as_str().map(|text| text.trim().to_string()))
-                .filter(|text| !text.is_empty())
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let answer_index = value
-        .get("answerIndex")
-        .and_then(|item| item.as_u64())
-        .unwrap_or(0) as usize;
+        .or_else(|| value.get("options"))
+        .or_else(|| value.get("answers"))
+        .and_then(string_list)?;
     Some(Question {
         prompt,
-        choices,
-        answer_index,
+        choices: choices.clone(),
+        answer_index: answer_index(value, &choices),
     })
 }
 
@@ -335,12 +415,57 @@ fn strip_fence(text: &str) -> &str {
         .trim()
 }
 
+fn message_text(message: &Value) -> Option<String> {
+    match message.get("content")? {
+        Value::String(text) => {
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(text.clone())
+            }
+        }
+        Value::Array(parts) => {
+            let text = parts
+                .iter()
+                .filter_map(|part| {
+                    part.as_str()
+                        .map(str::to_string)
+                        .or_else(|| text_field(part, &["text", "content"]))
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(text)
+            }
+        }
+        _ => None,
+    }
+}
+
 pub fn content_from_response(body: &Value) -> AppResult<TutorView> {
     let content = body
-        .pointer("/choices/0/message/content")
-        .and_then(|value| value.as_str())
+        .pointer("/choices/0/message")
+        .and_then(message_text)
         .ok_or_else(|| AppError::Message("The tutor returned an empty response.".into()))?;
-    Ok(view_from_model(&json_from_content(content)?))
+    ensure_study(view_from_model(&json_from_content(&content)?))
+}
+
+fn ensure_study(view: TutorView) -> AppResult<TutorView> {
+    let useful = view.summary.is_some()
+        || !view.questions.is_empty()
+        || !view.cards.is_empty()
+        || view.grade.is_some()
+        || !view.gaps.is_empty()
+        || view.follow_up.is_some();
+    if useful {
+        Ok(view)
+    } else {
+        Err(AppError::Message(
+            "The tutor did not return a quiz, summary, or cards from that text. Try again.".into(),
+        ))
+    }
 }
 
 pub fn openai_from_prompt(body: &Value) -> AppResult<Value> {
@@ -370,11 +495,16 @@ fn prompt_from_body(body: &Value) -> String {
         .unwrap_or_default()
 }
 
-async fn post_prompt(base: &str, body: &Value, timeout_secs: u64) -> AppResult<Value> {
-    let client = reqwest::Client::builder()
+fn tutor_client(timeout_secs: u64) -> AppResult<reqwest::Client> {
+    reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
+        .user_agent("MindVault/0.1")
         .build()
-        .map_err(|err| AppError::Message(err.to_string()))?;
+        .map_err(|err| AppError::Message(err.to_string()))
+}
+
+async fn post_prompt(base: &str, body: &Value, timeout_secs: u64) -> AppResult<Value> {
+    let client = tutor_client(timeout_secs)?;
     let response = client
         .post(base.trim_end_matches('/'))
         .json(&json!({ "prompt": prompt_from_body(body), "max_tokens": 800 }))
@@ -410,10 +540,7 @@ async fn post_chat(base: &str, key: &str, body: &Value, timeout_secs: u64) -> Ap
         return post_prompt(base, body, timeout_secs).await;
     }
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(timeout_secs))
-        .build()
-        .map_err(|err| AppError::Message(err.to_string()))?;
+    let client = tutor_client(timeout_secs)?;
     let request = client.post(url).json(body);
     let request = if key.is_empty() { request } else { request.bearer_auth(key) };
     let response = request
@@ -630,5 +757,35 @@ mod tests {
             first_model_id(&json!({"data": [{"id": "llama3.2"}, {"id": "other"}]})).as_deref(),
             Some("llama3.2")
         );
+    }
+
+    #[test]
+    fn quiz_prompt_puts_the_source_last_and_rejects_an_empty_copy() {
+        let body = request_body(
+            &TutorJob::Quiz {
+                source: "UNIQUE_SOURCE_FACT".into(),
+            },
+            "openai-fast",
+        );
+        let content = body["messages"][1]["content"].as_str().unwrap();
+        assert!(content.trim_end().ends_with("UNIQUE_SOURCE_FACT\n---"));
+        assert!(!content.contains("\"prompt\":\"\""));
+        let empty = content_from_response(&json!({
+            "choices": [{
+                "message": {
+                    "content": "{\"questions\":[{\"prompt\":\"\",\"choices\":[\"\"],\"answerIndex\":0}]}"
+                }
+            }]
+        }));
+        assert!(empty.is_err());
+        let loose = view_from_model(&json!({
+            "questions": [{
+                "question": "What produces ATP?",
+                "options": ["Chloroplast", "Mitochondria"],
+                "answer": "Mitochondria"
+            }]
+        }));
+        assert_eq!(loose.questions[0].answer_index, 1);
+        assert_eq!(loose.questions[0].choices[1], "Mitochondria");
     }
 }
