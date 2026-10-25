@@ -11,6 +11,7 @@ import {
   RotateCcw,
   ShieldBan,
   Sun,
+  Tv,
   Timer,
   Trash2,
 } from "lucide-react";
@@ -197,6 +198,8 @@ export function SettingsPage({
         <TutorKey view={view} locked={locked} pin={pin} save={save} />
       </div>
 
+      <Entertainment view={view} locked={locked} onSave={(hosts, programs) => void save(() => api.setEntertainment(pin, hosts, programs), "Entertainment list saved.")} />
+
       <Classify view={view} locked={locked} pin={pin} save={save} />
     </div>
   );
@@ -320,6 +323,43 @@ function Schedules({ view, locked, onSave }: { view: AppView; locked: boolean; o
           </button>
         ) : null}
       </div>
+    </Section>
+  );
+}
+
+function Entertainment({
+  view,
+  locked,
+  onSave,
+}: {
+  view: AppView;
+  locked: boolean;
+  onSave: (hosts: string[], programs: string[]) => void;
+}) {
+  const [hosts, setHosts] = useState(view.entertainmentHosts.join("\n"));
+  const [programs, setPrograms] = useState(view.entertainmentPrograms.join("\n"));
+  const hostList = hosts.split(/\n+/).map((host) => host.trim()).filter(Boolean);
+  const programList = programs.split(/\n+/).map((name) => name.trim()).filter(Boolean);
+
+  return (
+    <Section
+      icon={Tv}
+      title="Extra entertainment block"
+      hint="Added on Full, on top of YouTube, Netflix, Steam, and the rest. One site or program per line. Task Manager, Settings, and terminals cannot be added."
+    >
+      <div className="grid gap-3 sm:grid-cols-2">
+        <label className="block text-sm text-mv-muted">
+          Sites
+          <textarea className="mv-input mt-1 min-h-28 font-mono text-xs leading-relaxed" value={hosts} disabled={locked} onChange={(event) => setHosts(event.target.value)} placeholder={"discord.com\nroblox.com"} />
+        </label>
+        <label className="block text-sm text-mv-muted">
+          Programs
+          <textarea className="mv-input mt-1 min-h-28 font-mono text-xs leading-relaxed" value={programs} disabled={locked} onChange={(event) => setPrograms(event.target.value)} placeholder={"spotify.exe\ndiscord"} />
+        </label>
+      </div>
+      <button type="button" className="mv-btn mt-3" disabled={locked} onClick={() => onSave(hostList, programList)}>
+        <Lock className="size-4" /> Save list with PIN
+      </button>
     </Section>
   );
 }

@@ -39,6 +39,8 @@ export interface AppView {
   allowHosts: string[];
   denyHosts: string[];
   customBlocks: string[];
+  entertainmentHosts: string[];
+  entertainmentPrograms: string[];
   pendingSuggestion: Suggestion | null;
   session: SessionRow | null;
   schedules: Schedule[];

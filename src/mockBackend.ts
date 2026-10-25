@@ -47,6 +47,8 @@ function blank(): MockState {
     allowHosts: DEFAULT_ALLOW_HOSTS.slice(),
     denyHosts: DENY.slice(),
     customBlocks: [],
+    entertainmentHosts: [],
+    entertainmentPrograms: [],
     pendingSuggestion: null,
     session: null,
     schedules: [],
@@ -202,8 +204,8 @@ function hostOf(url: string) {
   return parsed.hostname.replace(/^www\./, "").toLowerCase();
 }
 
-function denied(host: string) {
-  return DENY.some((rule) => host === rule || host.endsWith(`.${rule}`));
+function denied(host: string, extra: string[] = []) {
+  return [...DENY, ...extra].some((rule) => host === rule || host.endsWith(`.${rule}`));
 }
 
 function requirePin(state: MockState, pin: string) {
@@ -263,10 +265,36 @@ export const preview = {
     for (const host of hosts) {
       const normalized = host.trim().toLowerCase().replace(/^www\./, "");
       if (!normalized) continue;
-      if (denied(normalized)) throw new Error(`${normalized} is on the denylist and cannot be added.`);
+      if (denied(normalized, state.entertainmentHosts)) throw new Error(`${normalized} is on the denylist and cannot be added.`);
       if (!clean.includes(normalized)) clean.push(normalized);
     }
     state.allowHosts = clean;
+    save(state);
+    return view(state);
+  },
+  setEntertainment(pin: string, hosts: string[], programs: string[]): AppView {
+    const state = load();
+    requirePin(state, pin);
+    const cleanHosts: string[] = [];
+    for (const host of hosts) {
+      const normalized = host.trim().toLowerCase().replace(/^www\./, "");
+      if (!normalized) continue;
+      if (denied(normalized)) throw new Error(`${normalized} is already blocked.`);
+      if (state.allowHosts.some((rule) => normalized === rule || normalized.endsWith(`.${rule}`) || rule.endsWith(`.${normalized}`))) {
+        throw new Error(`${normalized} is on your study list. Remove it there first.`);
+      }
+      if (!cleanHosts.includes(normalized)) cleanHosts.push(normalized);
+    }
+    const cleanPrograms: string[] = [];
+    for (const name of programs) {
+      const base = name.trim().toLowerCase().split(/[/\\]/).pop() ?? "";
+      if (!base || base === "taskmgr.exe" || base === "explorer.exe" || base === "cmd.exe") {
+        throw new Error(`${base || name} cannot be blocked.`);
+      }
+      if (!cleanPrograms.includes(base)) cleanPrograms.push(base);
+    }
+    state.entertainmentHosts = cleanHosts;
+    state.entertainmentPrograms = cleanPrograms;
     save(state);
     return view(state);
   },
@@ -354,7 +382,7 @@ export const preview = {
     const parsed = new URL(url);
     if (parsed.protocol !== "https:") throw new Error("Only https study pages on your allowlist can open.");
     const host = hostOf(url);
-    if (denied(host)) throw new Error("That site stays blocked.");
+    if (denied(host, state.entertainmentHosts)) throw new Error("That site stays blocked.");
     const allowed = state.session.frozenAllow.some((rule) => host === rule || host.endsWith(`.${rule}`));
     if (!allowed) throw new Error("Only https study pages on your allowlist can open.");
     window.open(url, "_blank", "noopener");

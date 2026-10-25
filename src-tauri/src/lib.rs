@@ -1,4 +1,5 @@
 mod enforcer;
+mod hotkey;
 mod oslock;
 mod error;
 mod policy;
@@ -156,6 +157,7 @@ fn arm_watcher(app: &AppHandle) {
             (pids, active, tooltip(&view))
         };
         set_tray(&app, &text);
+        hotkey::set_active(active);
         if !active {
             break;
         }
@@ -185,6 +187,7 @@ fn run_scheduler(app: &AppHandle) {
 fn disarm(app: &AppHandle) {
     let state = app.state::<AppState>();
     state.watch.fetch_add(1, Ordering::SeqCst);
+    hotkey::set_active(false);
     set_tray(app, "MindVault");
 }
 
@@ -210,6 +213,19 @@ fn reset_setup(state: State<AppState>, pin: String) -> Result<AppView, String> {
     let mut service = lock(&state);
     service.reset_setup(&pin).map_err(|err| err.to_string())?;
     service.view().map_err(|err| err.to_string())
+}
+
+#[tauri::command]
+fn set_entertainment(
+    state: State<AppState>,
+    pin: String,
+    hosts: Vec<String>,
+    programs: Vec<String>,
+) -> Result<AppView, String> {
+    let mut service = lock(&state);
+    service
+        .set_entertainment(&pin, &hosts, &programs)
+        .map_err(|err| err.to_string())
 }
 
 #[tauri::command]
@@ -326,15 +342,15 @@ fn reveal(window: &tauri::WebviewWindow) {
 /// so the study window never appears. This command stays async for that reason.
 #[tauri::command]
 async fn open_study(app: AppHandle, state: State<'_, AppState>, url: String) -> Result<(), String> {
-    let allow = {
+    let (allow, blocked) = {
         let service = lock(&state);
         service.check_study_url(&url).map_err(|err| err.to_string())?;
-        service
-            .view()
-            .map_err(|err| err.to_string())?
+        let view = service.view().map_err(|err| err.to_string())?;
+        let allow = view
             .session
             .ok_or_else(|| "No session is running.".to_string())?
-            .frozen_allow
+            .frozen_allow;
+        (allow, view.entertainment_hosts)
     };
     let parsed = url::Url::parse(&url).map_err(|err| err.to_string())?;
     if let Some(window) = app.get_webview_window("study") {
@@ -345,17 +361,20 @@ async fn open_study(app: AppHandle, state: State<'_, AppState>, url: String) -> 
         let _ = window.close();
     }
     let navigation_allow = allow.clone();
+    let navigation_block = blocked.clone();
     let popup_app = app.clone();
     let popup_allow = allow;
+    let popup_block = blocked;
     let window = WebviewWindowBuilder::new(&app, "study", WebviewUrl::External(parsed))
         .title("MindVault Study")
         .inner_size(1040.0, 760.0)
         .focused(true)
         .on_navigation(move |next| {
-            next.scheme() == "about" || policy::study_url_allowed(next.as_str(), &navigation_allow).is_ok()
+            next.scheme() == "about"
+                || policy::study_url_allowed_except(next.as_str(), &navigation_allow, &navigation_block).is_ok()
         })
         .on_new_window(move |url, _features| {
-            if policy::study_url_allowed(url.as_str(), &popup_allow).is_ok() {
+            if policy::study_url_allowed_except(url.as_str(), &popup_allow, &popup_block).is_ok() {
                 if let Some(study) = popup_app.get_webview_window("study") {
                     let _ = study.navigate(url);
                     reveal(&study);
@@ -480,6 +499,7 @@ pub fn run() {
             acknowledge_recovery,
             reset_setup,
             set_allowlist,
+            set_entertainment,
             set_api_config,
             probe_local_tutors,
             set_api_key,
@@ -500,6 +520,7 @@ pub fn run() {
         .expect("error while building MindVault")
         .run(|app, event| {
             if matches!(event, RunEvent::Exit) {
+                hotkey::set_active(false);
                 if let Some(state) = app.try_state::<AppState>() {
                     if let Ok(mut service) = state.svc.lock() {
                         let _ = service.on_process_exit();

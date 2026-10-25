@@ -1,8 +1,9 @@
 use crate::enforcer::Enforcer;
 use crate::error::{AppError, AppResult};
 use crate::policy::{
-    ai_domains_except, deny_hosts, entertainment_domains, kept_server_for_base, sanitize_allowlist, select_targets,
-    specs_for, study_url_allowed, validate_minutes, KeptServer, Level, ProcInfo, RuleKind, RuleSpec,
+    ai_domains_except, deny_hosts, entertainment_domains, kept_server_for_base, sanitize_allowlist,
+    sanitize_entertainment_hosts, sanitize_entertainment_programs, select_targets, study_url_allowed_except,
+    specs_for, validate_minutes, KeptServer, Level, ProcInfo, RuleKind, RuleSpec,
 };
 use crate::secrets::Secrets;
 use crate::store::{Schedule, SessionRow, Store, Suggestion};
@@ -32,6 +33,8 @@ pub struct AppView {
     pub allow_hosts: Vec<String>,
     pub deny_hosts: Vec<String>,
     pub custom_blocks: Vec<String>,
+    pub entertainment_hosts: Vec<String>,
+    pub entertainment_programs: Vec<String>,
     pub pending_suggestion: Option<Suggestion>,
     pub session: Option<SessionRow>,
     pub schedules: Vec<Schedule>,
@@ -74,6 +77,8 @@ impl Service {
             allow_hosts: self.store.allow_hosts()?,
             deny_hosts: deny_hosts(),
             custom_blocks: self.store.custom_blocks()?,
+            entertainment_hosts: self.store.entertainment_hosts()?,
+            entertainment_programs: self.store.entertainment_programs()?,
             pending_suggestion: self.store.suggestion()?,
             session: self.store.session()?,
             schedules: self.store.schedules()?,
@@ -119,7 +124,8 @@ impl Service {
 
     pub fn set_allowlist(&mut self, pin: &str, hosts: &[String]) -> AppResult<AppView> {
         self.require_unlocked_pin(pin)?;
-        let clean = sanitize_allowlist(hosts)?;
+        let extra = self.store.entertainment_hosts()?;
+        let clean = sanitize_allowlist(hosts, &extra)?;
         self.store.set_allow_hosts(&clean)?;
         self.view()
     }
@@ -163,6 +169,23 @@ impl Service {
             self.require_pin(pin)?;
         }
         self.begin(level, minutes)
+    }
+
+    pub fn set_entertainment(&mut self, pin: &str, hosts: &[String], programs: &[String]) -> AppResult<AppView> {
+        self.require_unlocked_pin(pin)?;
+        let hosts = sanitize_entertainment_hosts(hosts)?;
+        let programs = sanitize_entertainment_programs(programs)?;
+        let allow = self.store.allow_hosts()?;
+        for host in &hosts {
+            if allow.iter().any(|rule| crate::policy::host_matches(host, rule) || crate::policy::host_matches(rule, host)) {
+                return Err(AppError::Message(format!(
+                    "{host} is on your study list. Remove it there first."
+                )));
+            }
+        }
+        self.store.set_entertainment_hosts(&hosts)?;
+        self.store.set_entertainment_programs(&programs)?;
+        self.view()
     }
 
     pub fn set_schedules(&mut self, pin: &str, schedules: &[Schedule]) -> AppResult<AppView> {
@@ -302,7 +325,8 @@ impl Service {
 
     pub fn check_study_url(&self, url: &str) -> AppResult<()> {
         let session = self.store.session()?.ok_or(AppError::NoSession)?;
-        study_url_allowed(url, &session.frozen_allow)
+        let extra = self.store.entertainment_hosts().unwrap_or_default();
+        study_url_allowed_except(url, &session.frozen_allow, &extra)
     }
 
     pub fn targets(&self, procs: &[ProcInfo]) -> Vec<u32> {
@@ -310,8 +334,9 @@ impl Service {
             return Vec::new();
         };
         let extra = self.store.custom_blocks().unwrap_or_default();
+        let entertainment = self.store.entertainment_programs().unwrap_or_default();
         let kept = kept_server_for_base(&self.store.api_base().unwrap_or_default());
-        select_targets(procs, session.level, &extra, kept)
+        select_targets(procs, session.level, &extra, &entertainment, kept)
     }
 
     pub fn prepare_tutor(&self) -> AppResult<PreparedCall> {
@@ -446,7 +471,7 @@ impl Service {
                     crate::enforcer::resolve_ips(&ai_domains_except(&api_host))
                 };
                 let entertainment_ips = if level == Level::Full {
-                    crate::enforcer::resolve_ips(&entertainment_domains())
+                    crate::enforcer::resolve_ips(&entertainment_domains(&self.store.entertainment_hosts().unwrap_or_default()))
                 } else {
                     Vec::new()
                 };

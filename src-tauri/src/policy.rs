@@ -218,7 +218,7 @@ pub fn normalize_host(raw: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn host_matches(host: &str, rule: &str) -> bool {
+pub(crate) fn host_matches(host: &str, rule: &str) -> bool {
     let rule = normalize_host(rule);
     host == rule || host.ends_with(&format!(".{rule}"))
 }
@@ -240,7 +240,7 @@ pub fn valid_host_syntax(host: &str) -> bool {
         && !host.contains("..")
 }
 
-pub fn sanitize_allowlist(hosts: &[String]) -> AppResult<Vec<String>> {
+pub fn sanitize_allowlist(hosts: &[String], extra_deny: &[String]) -> AppResult<Vec<String>> {
     let mut clean = Vec::new();
     for host in hosts {
         let host = normalize_host(host);
@@ -250,7 +250,7 @@ pub fn sanitize_allowlist(hosts: &[String]) -> AppResult<Vec<String>> {
         if !valid_host_syntax(&host) {
             return Err(AppError::Message(format!("{host} is not a host name.")));
         }
-        if is_denied_host(&host) {
+        if is_denied_host(&host) || extra_deny.iter().any(|rule| host_matches(&host, rule)) {
             return Err(AppError::Message(format!(
                 "{host} is on the denylist and cannot be added."
             )));
@@ -262,14 +262,19 @@ pub fn sanitize_allowlist(hosts: &[String]) -> AppResult<Vec<String>> {
     Ok(clean)
 }
 
+#[allow(dead_code)]
 pub fn study_url_allowed(url: &str, allow: &[String]) -> AppResult<()> {
+    study_url_allowed_except(url, allow, &[])
+}
+
+pub fn study_url_allowed_except(url: &str, allow: &[String], extra_deny: &[String]) -> AppResult<()> {
     let parsed = url::Url::parse(url).map_err(|_| AppError::BadUrl)?;
     if parsed.scheme() != "https" {
         return Err(AppError::BadUrl);
     }
     let host = parsed.host_str().ok_or(AppError::BadUrl)?;
     let host = normalize_host(host);
-    if is_denied_host(&host) {
+    if is_denied_host(&host) || extra_deny.iter().any(|rule| host_matches(&host, rule)) {
         return Err(AppError::DeniedHost);
     }
     if allow.iter().any(|rule| host_matches(&host, rule)) {
@@ -399,9 +404,29 @@ fn is_spared_server(image: &str, cmd: &[String], kept: KeptServer) -> bool {
     }
 }
 
-pub fn should_stop(image: &str, cmd: &[String], level: Level, extra: &[String], kept: KeptServer) -> bool {
+fn protected_stem(name: &str) -> bool {
+    let owned = image_base(name);
+    let stem = owned.trim_end_matches(".exe");
+    PROTECTED.iter().any(|item| item.trim_end_matches(".exe") == stem)
+}
+
+fn program_same(listed: &str, base: &str) -> bool {
+    let owned = image_base(listed);
+    let listed_stem = owned.trim_end_matches(".exe");
+    let base_stem = base.trim_end_matches(".exe");
+    !listed_stem.is_empty() && listed_stem == base_stem
+}
+
+pub fn should_stop(
+    image: &str,
+    cmd: &[String],
+    level: Level,
+    extra: &[String],
+    entertainment: &[String],
+    kept: KeptServer,
+) -> bool {
     let base = image_base(image);
-    if is_protected_image(&base) || is_our_helper(cmd) {
+    if protected_stem(&base) || is_our_helper(cmd) {
         return false;
     }
     if is_spared_server(image, cmd, kept) {
@@ -425,14 +450,25 @@ pub fn should_stop(image: &str, cmd: &[String], level: Level, extra: &[String], 
     if level == Level::Full && matches_name(ENTERTAINMENT, &base) {
         return true;
     }
+    if level == Level::Full && entertainment.iter().any(|name| program_same(name, &base)) {
+        return true;
+    }
     false
 }
 
-pub fn select_targets(procs: &[ProcInfo], level: Level, extra: &[String], kept: KeptServer) -> Vec<u32> {
+pub fn select_targets(
+    procs: &[ProcInfo],
+    level: Level,
+    extra: &[String],
+    entertainment: &[String],
+    kept: KeptServer,
+) -> Vec<u32> {
     let self_pid = std::process::id();
     procs
         .iter()
-        .filter(|proc_| proc_.pid != self_pid && should_stop(&proc_.name, &proc_.cmd, level, extra, kept))
+        .filter(|proc_| {
+            proc_.pid != self_pid && should_stop(&proc_.name, &proc_.cmd, level, extra, entertainment, kept)
+        })
         .map(|proc_| proc_.pid)
         .collect()
 }
@@ -543,8 +579,8 @@ pub fn ai_domains_except(api_host: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn entertainment_domains() -> Vec<String> {
-    [
+pub fn entertainment_domains(extra: &[String]) -> Vec<String> {
+    let mut hosts = [
         "youtube.com",
         "youtu.be",
         "netflix.com",
@@ -555,7 +591,64 @@ pub fn entertainment_domains() -> Vec<String> {
     ]
     .into_iter()
     .map(str::to_string)
-    .collect()
+    .collect::<Vec<_>>();
+    for host in extra {
+        let host = normalize_host(host);
+        if valid_host_syntax(&host) && !hosts.iter().any(|existing| existing == &host) {
+            hosts.push(host);
+        }
+    }
+    hosts
+}
+
+pub fn sanitize_entertainment_hosts(hosts: &[String]) -> AppResult<Vec<String>> {
+    if hosts.len() > 40 {
+        return Err(AppError::Message("Keep the extra entertainment list to 40 sites.".into()));
+    }
+    let mut clean = Vec::new();
+    for host in hosts {
+        let host = normalize_host(host);
+        if host.is_empty() {
+            continue;
+        }
+        if !valid_host_syntax(&host) {
+            return Err(AppError::Message(format!("{host} is not a host name.")));
+        }
+        if is_denied_host(&host) {
+            return Err(AppError::Message(format!("{host} is already blocked.")));
+        }
+        if !clean.iter().any(|existing: &String| existing == &host) {
+            clean.push(host);
+        }
+    }
+    Ok(clean)
+}
+
+pub fn sanitize_entertainment_programs(names: &[String]) -> AppResult<Vec<String>> {
+    if names.len() > 40 {
+        return Err(AppError::Message("Keep the extra entertainment list to 40 programs.".into()));
+    }
+    let mut clean = Vec::new();
+    for name in names {
+        let base = image_base(name);
+        let ok = !base.is_empty()
+            && base.len() < 80
+            && !base.contains("..")
+            && !base.contains(':')
+            && base
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == ' ' || ch == '-' || ch == '_');
+        if !ok || protected_stem(&base) {
+            return Err(AppError::Message(format!("{base} cannot be blocked.")));
+        }
+        if ENTERTAINMENT.iter().any(|item| program_same(item, &base)) {
+            return Err(AppError::Message(format!("{base} is already blocked on Full.")));
+        }
+        if !clean.iter().any(|existing: &String| program_same(existing, &base)) {
+            clean.push(base);
+        }
+    }
+    Ok(clean)
 }
 
 pub fn candidate_programs() -> Vec<(ProgramClass, &'static str, &'static [&'static str])> {
@@ -707,7 +800,7 @@ mod tests {
                 name: name.into(),
                 cmd: vec![],
             }];
-            let hits = select_targets(&procs, Level::Full, &[name.into()], KeptServer::None);
+            let hits = select_targets(&procs, Level::Full, &[name.into()], &[], KeptServer::None);
             assert!(hits.is_empty(), "{name}");
         }
     }
@@ -745,10 +838,10 @@ mod tests {
             cmd: vec!["powershell".into(), "Remove-NetFirewallRule".into()],
         };
         let procs = vec![ai, cli, vite, chrome, steam, helper];
-        assert_eq!(select_targets(&procs, Level::Light, &[], KeptServer::None), vec![1, 2]);
-        assert_eq!(select_targets(&procs, Level::Standard, &[], KeptServer::None), vec![1, 2, 4]);
+        assert_eq!(select_targets(&procs, Level::Light, &[], &[], KeptServer::None), vec![1, 2]);
+        assert_eq!(select_targets(&procs, Level::Standard, &[], &[], KeptServer::None), vec![1, 2, 4]);
         assert_eq!(
-            select_targets(&procs, Level::Full, &[], KeptServer::None),
+            select_targets(&procs, Level::Full, &[], &[], KeptServer::None),
             vec![1, 2, 4, 5]
         );
         let ollama = vec![
@@ -763,16 +856,16 @@ mod tests {
                 cmd: vec!["ollama".into(), "run".into(), "llama3.2".into()],
             },
         ];
-        assert_eq!(select_targets(&ollama, Level::Light, &[], KeptServer::None), vec![7, 8]);
-        assert_eq!(select_targets(&ollama, Level::Light, &[], KeptServer::Ollama), vec![8]);
+        assert_eq!(select_targets(&ollama, Level::Light, &[], &[], KeptServer::None), vec![7, 8]);
+        assert_eq!(select_targets(&ollama, Level::Light, &[], &[], KeptServer::Ollama), vec![8]);
         let studio = vec![ProcInfo {
             pid: 13,
             name: "LM Studio.exe".into(),
             cmd: vec![],
         }];
-        assert_eq!(select_targets(&studio, Level::Light, &[], KeptServer::None), vec![13]);
-        assert_eq!(select_targets(&studio, Level::Light, &[], KeptServer::Ollama), vec![13]);
-        assert_eq!(select_targets(&studio, Level::Light, &[], KeptServer::LmStudio), Vec::<u32>::new());
+        assert_eq!(select_targets(&studio, Level::Light, &[], &[], KeptServer::None), vec![13]);
+        assert_eq!(select_targets(&studio, Level::Light, &[], &[], KeptServer::Ollama), vec![13]);
+        assert_eq!(select_targets(&studio, Level::Light, &[], &[], KeptServer::LmStudio), Vec::<u32>::new());
         assert_eq!(kept_server_for_base("http://127.0.0.1:1234/v1"), KeptServer::LmStudio);
         assert_eq!(kept_server_for_base("http://127.0.0.1:11434/v1"), KeptServer::Ollama);
         assert_eq!(kept_server_for_base("https://api.openai.com/v1"), KeptServer::None);
@@ -798,26 +891,44 @@ mod tests {
                 cmd: vec!["ollama".into(), "serve".into()],
             },
         ];
-        assert_eq!(select_targets(&unix, Level::Light, &[], KeptServer::Ollama), Vec::<u32>::new());
-        assert_eq!(select_targets(&unix, Level::Standard, &[], KeptServer::Ollama), vec![9]);
+        assert_eq!(select_targets(&unix, Level::Light, &[], &[], KeptServer::Ollama), Vec::<u32>::new());
+        assert_eq!(select_targets(&unix, Level::Standard, &[], &[], KeptServer::Ollama), vec![9]);
         let copilot = ProcInfo {
             pid: 14,
             name: "mscopilot.exe".into(),
             cmd: vec![],
         };
-        assert_eq!(select_targets(&[copilot], Level::Standard, &[], KeptServer::None), vec![14]);
+        assert_eq!(select_targets(&[copilot], Level::Standard, &[], &[], KeptServer::None), vec![14]);
         let bundled = ProcInfo {
             pid: 15,
             name: "msedgewebview2.exe".into(),
             cmd: vec![r"C:\Program Files (x86)\Microsoft\Copilot\Application\msedgewebview2.exe".into()],
         };
-        assert_eq!(select_targets(&[bundled], Level::Light, &[], KeptServer::None), vec![15]);
+        assert_eq!(select_targets(&[bundled], Level::Light, &[], &[], KeptServer::None), vec![15]);
         let own_webview = ProcInfo {
             pid: 16,
             name: "msedgewebview2.exe".into(),
             cmd: vec![r"C:\Program Files\MindVault\MindVault.exe".into()],
         };
-        assert!(select_targets(&[own_webview], Level::Full, &[], KeptServer::None).is_empty());
+        assert!(select_targets(&[own_webview], Level::Full, &[], &[], KeptServer::None).is_empty());
+        let discord = ProcInfo {
+            pid: 17,
+            name: "Discord.exe".into(),
+            cmd: vec![],
+        };
+        assert!(select_targets(&[discord.clone()], Level::Standard, &[], &["discord.exe".into()], KeptServer::None).is_empty());
+        assert_eq!(
+            select_targets(&[discord], Level::Full, &[], &["discord".into()], KeptServer::None),
+            vec![17]
+        );
+        assert!(sanitize_entertainment_hosts(&["discord.com".into()]).unwrap() == vec!["discord.com".to_string()]);
+        assert!(sanitize_entertainment_hosts(&["youtube.com".into()]).is_err());
+        assert!(sanitize_entertainment_programs(&["taskmgr.exe".into()]).is_err());
+        assert!(sanitize_entertainment_programs(&["spotify".into()]).is_ok());
+        assert_eq!(
+            entertainment_domains(&["discord.com".into()]).iter().any(|host| host == "discord.com"),
+            true
+        );
     }
 
     #[test]

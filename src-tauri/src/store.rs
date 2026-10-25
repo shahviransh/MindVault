@@ -67,6 +67,12 @@ impl Store {
         if store.get("custom_blocks")?.is_none() {
             store.set("custom_blocks", "[]")?;
         }
+        if store.get("entertainment_hosts")?.is_none() {
+            store.set("entertainment_hosts", "[]")?;
+        }
+        if store.get("entertainment_programs")?.is_none() {
+            store.set("entertainment_programs", "[]")?;
+        }
         Ok(store)
     }
 
@@ -151,6 +157,28 @@ impl Store {
     pub fn set_custom_blocks(&self, names: &[String]) -> AppResult<()> {
         self.set(
             "custom_blocks",
+            &serde_json::to_string(names).unwrap_or_else(|_| "[]".into()),
+        )
+    }
+
+    pub fn entertainment_hosts(&self) -> AppResult<Vec<String>> {
+        self.json("entertainment_hosts", Vec::new())
+    }
+
+    pub fn set_entertainment_hosts(&self, hosts: &[String]) -> AppResult<()> {
+        self.set(
+            "entertainment_hosts",
+            &serde_json::to_string(hosts).unwrap_or_else(|_| "[]".into()),
+        )
+    }
+
+    pub fn entertainment_programs(&self) -> AppResult<Vec<String>> {
+        self.json("entertainment_programs", Vec::new())
+    }
+
+    pub fn set_entertainment_programs(&self, names: &[String]) -> AppResult<()> {
+        self.set(
+            "entertainment_programs",
             &serde_json::to_string(names).unwrap_or_else(|_| "[]".into()),
         )
     }

@@ -19,6 +19,8 @@ export const api = {
   resetSetup: (pin: string) => call<AppView>("reset_setup", { pin }, () => preview.resetSetup(pin)),
   setAllowlist: (pin: string, hosts: string[]) =>
     call<AppView>("set_allowlist", { pin, hosts }, () => preview.setAllowlist(pin, hosts)),
+  setEntertainment: (pin: string, hosts: string[], programs: string[]) =>
+    call<AppView>("set_entertainment", { pin, hosts, programs }, () => preview.setEntertainment(pin, hosts, programs)),
   setApiConfig: (pin: string, base: string, model: string) =>
     call<AppView>("set_api_config", { pin, base, model }, () => preview.setApiConfig(pin, base, model)),
   probeLocalTutors: () =>
