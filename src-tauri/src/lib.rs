@@ -316,8 +316,16 @@ fn end_with_recovery(app: AppHandle, state: State<AppState>, key: String) -> Res
     Ok(view)
 }
 
+fn reveal(window: &tauri::WebviewWindow) {
+    let _ = window.unminimize();
+    let _ = window.show();
+    let _ = window.set_focus();
+}
+
+/// Creating a webview from a synchronous command deadlocks WebView2 on Windows,
+/// so the study window never appears. This command stays async for that reason.
 #[tauri::command]
-fn open_study(app: AppHandle, state: State<AppState>, url: String) -> Result<(), String> {
+async fn open_study(app: AppHandle, state: State<'_, AppState>, url: String) -> Result<(), String> {
     let allow = {
         let service = lock(&state);
         service.check_study_url(&url).map_err(|err| err.to_string())?;
@@ -330,17 +338,35 @@ fn open_study(app: AppHandle, state: State<AppState>, url: String) -> Result<(),
     };
     let parsed = url::Url::parse(&url).map_err(|err| err.to_string())?;
     if let Some(window) = app.get_webview_window("study") {
-        window.navigate(parsed).map_err(|err| err.to_string())?;
-        let _ = window.set_focus();
-        return Ok(());
+        if window.navigate(parsed.clone()).is_ok() {
+            reveal(&window);
+            return Ok(());
+        }
+        let _ = window.close();
     }
-    WebviewWindowBuilder::new(&app, "study", WebviewUrl::External(parsed))
+    let navigation_allow = allow.clone();
+    let popup_app = app.clone();
+    let popup_allow = allow;
+    let window = WebviewWindowBuilder::new(&app, "study", WebviewUrl::External(parsed))
         .title("MindVault Study")
         .inner_size(1040.0, 760.0)
-        .on_navigation(move |next| policy::study_url_allowed(next.as_str(), &allow).is_ok())
+        .focused(true)
+        .on_navigation(move |next| {
+            next.scheme() == "about" || policy::study_url_allowed(next.as_str(), &navigation_allow).is_ok()
+        })
+        .on_new_window(move |url, _features| {
+            if policy::study_url_allowed(url.as_str(), &popup_allow).is_ok() {
+                if let Some(study) = popup_app.get_webview_window("study") {
+                    let _ = study.navigate(url);
+                    reveal(&study);
+                }
+            }
+            tauri::webview::NewWindowResponse::Deny
+        })
         .on_download(|_, _| false)
         .build()
         .map_err(|err| err.to_string())?;
+    reveal(&window);
     Ok(())
 }
 

@@ -69,9 +69,15 @@ function Browse({ hosts }: { hosts: string[] }) {
   const studyHosts = hosts.filter((host) => hostKind(host) === "study");
   const gameHosts = hosts.filter((host) => hostKind(host) === "game");
 
+  function studyTarget(target: string): string {
+    const trimmed = target.trim();
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    return `https://${trimmed.replace(/^\/+/, "")}`;
+  }
+
   async function open(target: string) {
     try {
-      await api.openStudy(target);
+      await api.openStudy(studyTarget(target));
     } catch (error) {
       toast(error instanceof Error ? error.message : String(error), "bad");
     }

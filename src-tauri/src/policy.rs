@@ -93,6 +93,7 @@ const AI_IMAGES: &[&str] = &[
     "lmstudio",
     "cursor.exe",
     "copilot.exe",
+    "mscopilot.exe",
     "githubcopilot.exe",
     "code.exe",
 ];
@@ -337,6 +338,19 @@ fn shell_invokes_ai(cmd: &[String]) -> bool {
     stems.windows(2).any(|pair| pair[0] == "gh" && pair[1] == "copilot")
 }
 
+/// The Windows Copilot app is `mscopilot.exe`, and its page runs in a bundled WebView.
+/// Only that WebView is closed. MindVault's own WebView has a different command line.
+fn copilot_host_process(image: &str, cmd: &[String]) -> bool {
+    let stem = image_base(image).trim_end_matches(".exe").to_string();
+    if stem != "msedgewebview2" && stem != "msedge" {
+        return false;
+    }
+    let joined = cmd.join(" ").to_ascii_lowercase().replace('/', "\\");
+    joined.contains("\\microsoft\\copilot\\")
+        || joined.contains("microsoft.copilot_")
+        || joined.contains("mscopilot.exe")
+}
+
 fn is_ai_cli(image: &str, cmd: &[String]) -> bool {
     const INTERPRETERS: &[&str] = &["node", "python", "pythonw", "python3", "bun", "deno", "ruby"];
     let stem = image.trim_end_matches(".exe");
@@ -396,7 +410,7 @@ pub fn should_stop(image: &str, cmd: &[String], level: Level, extra: &[String], 
     if extra.iter().any(|name| image_base(name) == base) {
         return valid_block_image(&base);
     }
-    if matches_name(AI_IMAGES, &base) {
+    if matches_name(AI_IMAGES, &base) || copilot_host_process(&base, cmd) {
         return true;
     }
     if is_ai_cli(&base, cmd) {
@@ -581,6 +595,14 @@ pub fn candidate_programs() -> Vec<(ProgramClass, &'static str, &'static [&'stat
                 "cursor/Cursor.exe",
                 "bin/cursor",
                 "local/bin/cursor",
+            ],
+        ),
+        (
+            ProgramClass::Ai,
+            "copilot",
+            &[
+                "Microsoft/Copilot/Application/mscopilot.exe",
+                "Microsoft/Copilot/mscopilot.exe",
             ],
         ),
         (
@@ -778,6 +800,24 @@ mod tests {
         ];
         assert_eq!(select_targets(&unix, Level::Light, &[], KeptServer::Ollama), Vec::<u32>::new());
         assert_eq!(select_targets(&unix, Level::Standard, &[], KeptServer::Ollama), vec![9]);
+        let copilot = ProcInfo {
+            pid: 14,
+            name: "mscopilot.exe".into(),
+            cmd: vec![],
+        };
+        assert_eq!(select_targets(&[copilot], Level::Standard, &[], KeptServer::None), vec![14]);
+        let bundled = ProcInfo {
+            pid: 15,
+            name: "msedgewebview2.exe".into(),
+            cmd: vec![r"C:\Program Files (x86)\Microsoft\Copilot\Application\msedgewebview2.exe".into()],
+        };
+        assert_eq!(select_targets(&[bundled], Level::Light, &[], KeptServer::None), vec![15]);
+        let own_webview = ProcInfo {
+            pid: 16,
+            name: "msedgewebview2.exe".into(),
+            cmd: vec![r"C:\Program Files\MindVault\MindVault.exe".into()],
+        };
+        assert!(select_targets(&[own_webview], Level::Full, &[], KeptServer::None).is_empty());
     }
 
     #[test]
