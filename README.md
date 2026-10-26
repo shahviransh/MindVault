@@ -95,9 +95,8 @@ Session state, the PIN hash, the recovery-key hash, schedules, and the site list
 ## Tests
 
 ```bash
-npm run build
+npm test
 cargo test --offline --manifest-path src-tauri/Cargo.toml
-node --experimental-strip-types --test src/games/invariants.test.ts
 ```
 
 The Rust tests use an in-memory stand-in. They do not change the real firewall or the keychain.
