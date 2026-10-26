@@ -134,6 +134,7 @@ fn arm_watcher(app: &AppHandle) {
     let state = app.state::<AppState>();
     let generation = state.watch.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
+    hotkey::set_active(true);
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(2));
         let state = app.state::<AppState>();

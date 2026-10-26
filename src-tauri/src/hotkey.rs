@@ -25,20 +25,32 @@ fn still_active() -> bool {
     ACTIVE.load(Ordering::SeqCst)
 }
 
+/// Win+C and the Copilot key (Win+F23). Ctrl or Alt keeps the key, so Win+Ctrl+C still toggles color filters.
+pub(crate) fn swallow_ai_shortcut(win: bool, ctrl: bool, alt: bool, vk: u32) -> bool {
+    win && !ctrl && !alt && (vk == 0x43 || vk == 0x86)
+}
+
 #[cfg(windows)]
 mod platform {
     use super::{still_active, ACTIVE};
     use std::sync::atomic::{AtomicU32, Ordering};
     use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+    use std::sync::atomic::AtomicBool;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-        GetAsyncKeyState, VK_C, VK_CONTROL, VK_F23, VK_LWIN, VK_MENU, VK_RWIN,
+        GetAsyncKeyState, RegisterHotKey, UnregisterHotKey, MOD_NOREPEAT, MOD_SHIFT, MOD_WIN, VK_C, VK_CONTROL,
+        VK_F23, VK_LCONTROL, VK_LMENU, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RWIN,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION,
-        KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_QUIT,
+        CallNextHookEx, GetMessageW, PeekMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
+        HC_ACTION, KBDLLHOOKSTRUCT, MSG, PM_NOREMOVE, WH_KEYBOARD_LL, WM_QUIT,
     };
 
     static THREAD: AtomicU32 = AtomicU32::new(0);
+    static LEFT_WIN: AtomicBool = AtomicBool::new(false);
+    static RIGHT_WIN: AtomicBool = AtomicBool::new(false);
+    static CTRL: AtomicBool = AtomicBool::new(false);
+    static ALT: AtomicBool = AtomicBool::new(false);
+    const LLKHF_UP: u32 = 0x80;
 
     pub fn stop() {
         let id = THREAD.load(Ordering::SeqCst);
@@ -57,6 +69,9 @@ mod platform {
                 THREAD.store(0, Ordering::SeqCst);
                 return;
             }
+            // The thread needs a message queue before the hook is installed, or Windows drops the hook.
+            let mut message = std::mem::zeroed::<MSG>();
+            PeekMessageW(&mut message, std::ptr::null_mut(), 0, 0, PM_NOREMOVE);
             let hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(proc), std::ptr::null_mut(), 0);
             if hook.is_null() || !still_active() {
                 if !hook.is_null() {
@@ -66,27 +81,45 @@ mod platform {
                 ACTIVE.store(false, Ordering::SeqCst);
                 return;
             }
-            let mut message = std::mem::zeroed::<MSG>();
+            // Claim the shortcut so Explorer cannot keep it. Failure is fine; the hook still eats the key.
+            let _ = RegisterHotKey(std::ptr::null_mut(), 1, MOD_WIN | MOD_NOREPEAT, VK_C as u32);
+            let _ = RegisterHotKey(
+                std::ptr::null_mut(),
+                2,
+                MOD_WIN | MOD_SHIFT | MOD_NOREPEAT,
+                VK_F23 as u32,
+            );
             while GetMessageW(&mut message, std::ptr::null_mut(), 0, 0) > 0 {}
+            UnregisterHotKey(std::ptr::null_mut(), 1);
+            UnregisterHotKey(std::ptr::null_mut(), 2);
             UnhookWindowsHookEx(hook);
+            LEFT_WIN.store(false, Ordering::SeqCst);
+            RIGHT_WIN.store(false, Ordering::SeqCst);
+            CTRL.store(false, Ordering::SeqCst);
+            ALT.store(false, Ordering::SeqCst);
             THREAD.store(0, Ordering::SeqCst);
         }
     }
 
-    fn down(key: u16) -> bool {
-        unsafe { GetAsyncKeyState(key as i32) < 0 }
+    fn note(vk: u32, up: bool) {
+        let slot = if vk == VK_LWIN as u32 {
+            Some(&LEFT_WIN)
+        } else if vk == VK_RWIN as u32 {
+            Some(&RIGHT_WIN)
+        } else if vk == VK_CONTROL as u32 || vk == VK_LCONTROL as u32 || vk == VK_RCONTROL as u32 {
+            Some(&CTRL)
+        } else if vk == VK_MENU as u32 || vk == VK_LMENU as u32 || vk == VK_RMENU as u32 {
+            Some(&ALT)
+        } else {
+            None
+        };
+        if let Some(slot) = slot {
+            slot.store(!up, Ordering::SeqCst);
+        }
     }
 
-    /// Windows key + C opens Copilot. The Copilot hardware key is Windows + F23.
-    /// Control or Alt keeps the key, so color filters (Windows+Ctrl+C) still work.
-    fn swallow(code: u32) -> bool {
-        if !down(VK_LWIN) && !down(VK_RWIN) {
-            return false;
-        }
-        if down(VK_CONTROL) || down(VK_MENU) {
-            return false;
-        }
-        code == VK_C as u32 || code == VK_F23 as u32
+    fn held(key: u16) -> bool {
+        unsafe { GetAsyncKeyState(key as i32) < 0 }
     }
 
     unsafe extern "system" fn proc(
@@ -96,7 +129,14 @@ mod platform {
     ) -> windows_sys::Win32::Foundation::LRESULT {
         if code == HC_ACTION as i32 {
             let info = &*(lparam as *const KBDLLHOOKSTRUCT);
-            if swallow(info.vkCode) {
+            let up = info.flags & LLKHF_UP != 0;
+            note(info.vkCode, up);
+            // The hook's own record is what counts. Asking Windows if the Windows key is down often says no.
+            let win = LEFT_WIN.load(Ordering::SeqCst)
+                || RIGHT_WIN.load(Ordering::SeqCst)
+                || held(VK_LWIN)
+                || held(VK_RWIN);
+            if super::swallow_ai_shortcut(win, CTRL.load(Ordering::SeqCst), ALT.load(Ordering::SeqCst), info.vkCode) {
                 return 1;
             }
         }
@@ -277,4 +317,19 @@ mod platform {
 mod platform {
     pub fn run() {}
     pub fn stop() {}
+}
+
+#[cfg(test)]
+mod tests {
+    use super::swallow_ai_shortcut;
+
+    #[test]
+    fn win_c_and_the_copilot_key_are_swallowed() {
+        assert!(swallow_ai_shortcut(true, false, false, 0x43));
+        assert!(swallow_ai_shortcut(true, false, false, 0x86));
+        assert!(!swallow_ai_shortcut(true, true, false, 0x43));
+        assert!(!swallow_ai_shortcut(true, false, true, 0x43));
+        assert!(!swallow_ai_shortcut(false, false, false, 0x43));
+        assert!(!swallow_ai_shortcut(true, false, false, b'L' as u32));
+    }
 }
