@@ -1,9 +1,9 @@
 use crate::enforcer::Enforcer;
 use crate::error::{AppError, AppResult};
 use crate::policy::{
-    ai_domains_except, deny_hosts, entertainment_domains, kept_server_for_base, sanitize_allowlist,
-    sanitize_entertainment_hosts, sanitize_entertainment_programs, select_targets, study_url_allowed_except,
-    specs_for, validate_minutes, KeptServer, Level, ProcInfo, RuleKind, RuleSpec,
+    ai_domains_except, deny_hosts, entertainment_domains, kept_server_for_base, local_note_allowed, sanitize_allowlist,
+    sanitize_entertainment_hosts, sanitize_entertainment_programs, sanitize_note_kinds, select_targets,
+    study_url_allowed_except, specs_for, validate_minutes, KeptServer, Level, ProcInfo, RuleKind, RuleSpec,
 };
 use crate::secrets::Secrets;
 use crate::store::{Schedule, SessionRow, Store, Suggestion};
@@ -35,6 +35,7 @@ pub struct AppView {
     pub custom_blocks: Vec<String>,
     pub entertainment_hosts: Vec<String>,
     pub entertainment_programs: Vec<String>,
+    pub note_files: Vec<String>,
     pub pending_suggestion: Option<Suggestion>,
     pub session: Option<SessionRow>,
     pub schedules: Vec<Schedule>,
@@ -79,6 +80,7 @@ impl Service {
             custom_blocks: self.store.custom_blocks()?,
             entertainment_hosts: self.store.entertainment_hosts()?,
             entertainment_programs: self.store.entertainment_programs()?,
+            note_files: self.store.note_files()?,
             pending_suggestion: self.store.suggestion()?,
             session: self.store.session()?,
             schedules: self.store.schedules()?,
@@ -188,6 +190,15 @@ impl Service {
         self.view()
     }
 
+    pub fn set_note_files(&mut self, kinds: &[String]) -> AppResult<AppView> {
+        if self.store.session()?.is_some() {
+            return Err(AppError::Frozen);
+        }
+        let kinds = sanitize_note_kinds(kinds)?;
+        self.store.set_note_files(&kinds)?;
+        self.view()
+    }
+
     pub fn set_schedules(&mut self, pin: &str, schedules: &[Schedule]) -> AppResult<AppView> {
         self.require_unlocked_pin(pin)?;
         let clean = crate::schedule::validate(schedules)?;
@@ -233,6 +244,7 @@ impl Service {
             ends_at: now + Duration::minutes(minutes as i64),
             block_completed: false,
             frozen_allow: self.store.allow_hosts()?,
+            note_files: self.store.note_files()?,
         };
         if let Err(err) = self.store.set_session(Some(&session)) {
             let _ = self.enforcer.clear();
@@ -325,6 +337,13 @@ impl Service {
 
     pub fn check_study_url(&self, url: &str) -> AppResult<()> {
         let session = self.store.session()?.ok_or(AppError::NoSession)?;
+        if url::Url::parse(url).is_ok_and(|parsed| parsed.scheme() == "file") {
+            return if local_note_allowed(url, &session.note_files) {
+                Ok(())
+            } else {
+                Err(AppError::Message("That file type was left off for this session.".into()))
+            };
+        }
         let extra = self.store.entertainment_hosts().unwrap_or_default();
         study_url_allowed_except(url, &session.frozen_allow, &extra)
     }
@@ -680,6 +699,7 @@ mod tests {
             .set_allowlist("1234", &["wikipedia.org".into(), "youtube.com".into()])
             .is_err());
         svc.set_allowlist("1234", &["wikipedia.org".into()]).unwrap();
+        svc.set_note_files(&["pdf".into()]).unwrap();
         svc.start_session(Level::Standard, 25, Some("1234")).unwrap();
         assert!(svc
             .set_allowlist("1234", &["wikipedia.org".into(), "arxiv.org".into()])
@@ -688,6 +708,11 @@ mod tests {
         assert!(svc.check_study_url("https://chatgpt.com").is_err());
         assert!(svc.check_study_url("https://www.youtube.com").is_err());
         assert!(svc.check_study_url("https://example.com").is_err());
+        let pdf = url::Url::from_file_path(std::env::temp_dir().join("lecture.pdf")).unwrap();
+        let html = url::Url::from_file_path(std::env::temp_dir().join("notes.html")).unwrap();
+        assert!(svc.check_study_url(pdf.as_str()).is_ok());
+        assert!(svc.check_study_url(html.as_str()).is_err());
+        assert!(svc.set_note_files(&[]).is_err());
     }
 
     #[test]

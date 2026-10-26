@@ -61,6 +61,7 @@ function blank(): MockState {
     customBlocks: [],
     entertainmentHosts: [],
     entertainmentPrograms: [],
+    noteFiles: [],
     pendingSuggestion: null,
     session: null,
     schedules: [],
@@ -77,6 +78,8 @@ function load(): MockState {
   const parsed = { ...blank(), ...(JSON.parse(raw) as Partial<MockState>) } as MockState;
   parsed.denyHosts = DENY.slice();
   parsed.practiceMode = true;
+  parsed.noteFiles = parsed.noteFiles ?? [];
+  if (parsed.session) parsed.session.noteFiles = parsed.session.noteFiles ?? [];
   if (parsed.session && new Date(parsed.session.endsAt).getTime() <= Date.now()) {
     parsed.session = null;
   }
@@ -204,6 +207,7 @@ function startScheduled(state: MockState): boolean {
         endsAt: end.toISOString(),
         blockCompleted: false,
         frozenAllow: state.allowHosts.slice(),
+        noteFiles: state.noteFiles.slice(),
       };
       return true;
     }
@@ -347,6 +351,7 @@ export const preview = {
       endsAt: end.toISOString(),
       blockCompleted: false,
       frozenAllow: state.allowHosts.slice(),
+      noteFiles: state.noteFiles.slice(),
     };
     save(state);
     return view(state);
@@ -388,16 +393,47 @@ export const preview = {
     save(state);
     return view(state);
   },
+  setNoteFiles(kinds: string[]): AppView {
+    const state = load();
+    if (state.session) throw new Error("Change this before a session starts.");
+    const allowed = ["pdf", "image", "text"];
+    const clean = [...new Set(kinds.map((kind) => kind.trim().toLowerCase()).filter(Boolean))];
+    for (const kind of clean) {
+      if (!allowed.includes(kind)) throw new Error(`${kind} is not a note type the study window can show.`);
+    }
+    clean.sort((left, right) => allowed.indexOf(left) - allowed.indexOf(right));
+    state.noteFiles = clean;
+    save(state);
+    return view(state);
+  },
   openStudy(url: string) {
     const state = load();
     if (!state.session) throw new Error("No session is running.");
     const parsed = new URL(url);
+    if (parsed.protocol === "file:") {
+      const name = decodeURIComponent(parsed.pathname).split(/[/\\]/).pop() ?? "";
+      const ext = name.includes(".") ? name.split(".").pop()!.toLowerCase() : "";
+      const allowed: Record<string, string[]> = {
+        pdf: ["pdf"],
+        image: ["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+        text: ["txt", "md", "markdown", "csv"],
+      };
+      const ok = state.session.noteFiles.some((kind) => (allowed[kind] ?? []).includes(ext));
+      if (!ok) throw new Error("That file type was left off for this session.");
+      return;
+    }
     if (parsed.protocol !== "https:") throw new Error("Only https study pages on your allowlist can open.");
     const host = hostOf(url);
     if (denied(host, state.entertainmentHosts)) throw new Error("That site stays blocked.");
     const allowed = state.session.frozenAllow.some((rule) => host === rule || host.endsWith(`.${rule}`));
     if (!allowed) throw new Error("Only https study pages on your allowlist can open.");
     window.open(url, "_blank", "noopener");
+  },
+  openNote() {
+    const state = load();
+    if (!state.session) throw new Error("No session is running.");
+    if (state.session.noteFiles.length === 0) throw new Error("Notes were left off for this session.");
+    throw new Error("The preview cannot open a file. The desktop app opens it in the study window.");
   },
   tutor(job: TutorJob): TutorView {
     if ("prompt" in job || "messages" in job) throw new Error("That request is not a study action.");

@@ -13,6 +13,8 @@ pub struct SessionRow {
     pub ends_at: DateTime<Utc>,
     pub block_completed: bool,
     pub frozen_allow: Vec<String>,
+    #[serde(default)]
+    pub note_files: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +74,9 @@ impl Store {
         }
         if store.get("entertainment_programs")?.is_none() {
             store.set("entertainment_programs", "[]")?;
+        }
+        if store.get("note_files")?.is_none() {
+            store.set("note_files", "[]")?;
         }
         Ok(store)
     }
@@ -159,6 +164,14 @@ impl Store {
             "custom_blocks",
             &serde_json::to_string(names).unwrap_or_else(|_| "[]".into()),
         )
+    }
+
+    pub fn note_files(&self) -> AppResult<Vec<String>> {
+        self.json("note_files", Vec::new())
+    }
+
+    pub fn set_note_files(&self, kinds: &[String]) -> AppResult<()> {
+        self.set("note_files", &serde_json::to_string(kinds).unwrap_or_else(|_| "[]".into()))
     }
 
     pub fn entertainment_hosts(&self) -> AppResult<Vec<String>> {

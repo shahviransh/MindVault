@@ -12,6 +12,7 @@ export interface SessionRow {
   endsAt: string;
   blockCompleted: boolean;
   frozenAllow: string[];
+  noteFiles: string[];
 }
 
 export interface Schedule {
@@ -41,6 +42,7 @@ export interface AppView {
   customBlocks: string[];
   entertainmentHosts: string[];
   entertainmentPrograms: string[];
+  noteFiles: string[];
   pendingSuggestion: Suggestion | null;
   session: SessionRow | null;
   schedules: Schedule[];

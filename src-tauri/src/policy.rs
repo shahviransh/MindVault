@@ -282,6 +282,105 @@ pub fn study_url_allowed(url: &str, allow: &[String]) -> AppResult<()> {
     study_url_allowed_except(url, allow, &[])
 }
 
+pub fn sanitize_note_kinds(kinds: &[String]) -> AppResult<Vec<String>> {
+    const ORDER: &[&str] = &["pdf", "image", "text"];
+    let mut clean = Vec::new();
+    for kind in kinds {
+        let kind = kind.trim().to_ascii_lowercase();
+        if kind.is_empty() {
+            continue;
+        }
+        if !ORDER.contains(&kind.as_str()) {
+            return Err(AppError::Message(format!(
+                "{kind} is not a note type the study window can show."
+            )));
+        }
+        if !clean.iter().any(|existing: &String| existing == &kind) {
+            clean.push(kind);
+        }
+    }
+    clean.sort_by_key(|kind| ORDER.iter().position(|item| item == kind).unwrap_or(ORDER.len()));
+    Ok(clean)
+}
+
+pub(crate) fn extensions_for(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "pdf" => &["pdf"],
+        "image" => &["png", "jpg", "jpeg", "gif", "webp", "bmp"],
+        "text" => &["txt", "md", "markdown", "csv"],
+        _ => &[],
+    }
+}
+
+pub fn local_note_allowed(url: &str, kinds: &[String]) -> bool {
+    let Ok(parsed) = url::Url::parse(url) else {
+        return false;
+    };
+    if parsed.scheme() != "file" {
+        return false;
+    }
+    if parsed.host_str().is_some_and(|host| !host.is_empty() && !host.eq_ignore_ascii_case("localhost")) {
+        return false;
+    }
+    let Ok(path) = parsed.to_file_path() else {
+        return false;
+    };
+    if !path.is_absolute() {
+        return false;
+    }
+    let text = path.to_string_lossy();
+    if text.starts_with(r"\\") || text.starts_with("//") {
+        return false;
+    }
+    let Some(extension) = path.extension().and_then(|item| item.to_str()) else {
+        return false;
+    };
+    let extension = extension.to_ascii_lowercase();
+    kinds.iter().any(|kind| extensions_for(kind).iter().any(|item| *item == extension))
+}
+
+fn strip_verbatim(path: std::path::PathBuf) -> std::path::PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return std::path::PathBuf::from(rest.to_string());
+    }
+    path
+}
+
+pub fn note_file_url(path: &std::path::Path, kinds: &[String]) -> AppResult<String> {
+    let path = path
+        .canonicalize()
+        .map_err(|_| AppError::Message("That note could not be opened.".into()))?;
+    let path = strip_verbatim(path);
+    if !path.is_file() {
+        return Err(AppError::Message("That note could not be opened.".into()));
+    }
+    let text = path.to_string_lossy();
+    if text.starts_with(r"\\") || text.starts_with("//") {
+        return Err(AppError::Message("Notes have to be files on this computer.".into()));
+    }
+    let url = url::Url::from_file_path(&path).map_err(|_| AppError::Message("That note could not be opened.".into()))?;
+    if !local_note_allowed(url.as_str(), kinds) {
+        return Err(AppError::Message("That file type was left off for this session.".into()));
+    }
+    Ok(url.to_string())
+}
+
+pub fn study_navigation_allowed(url: &str, allow: &[String], extra_deny: &[String], kinds: &[String]) -> bool {
+    if let Ok(parsed) = url::Url::parse(url) {
+        if parsed.scheme() == "about" {
+            return true;
+        }
+        if parsed.scheme() == "file" {
+            return local_note_allowed(url, kinds);
+        }
+    }
+    study_url_allowed_except(url, allow, extra_deny).is_ok()
+}
+
 pub fn study_url_allowed_except(url: &str, allow: &[String], extra_deny: &[String]) -> AppResult<()> {
     let parsed = url::Url::parse(url).map_err(|_| AppError::BadUrl)?;
     if parsed.scheme() != "https" {
@@ -836,6 +935,18 @@ mod tests {
         assert!(study_url_allowed("https://en.wikipedia.org/wiki/Memory", &allow).is_ok());
         assert!(study_url_allowed("https://evil.example/wiki", &allow).is_err());
         assert!(study_url_allowed("http://en.wikipedia.org/wiki/Memory", &allow).is_err());
+        let kinds = sanitize_note_kinds(&["text".into(), "pdf".into(), "pdf".into()]).unwrap();
+        assert_eq!(kinds, vec!["pdf".to_string(), "text".to_string()]);
+        assert!(sanitize_note_kinds(&["html".into()]).is_err());
+        let pdf = url::Url::from_file_path(std::env::temp_dir().join("lecture.pdf")).unwrap();
+        let png = url::Url::from_file_path(std::env::temp_dir().join("diagram.png")).unwrap();
+        let html = url::Url::from_file_path(std::env::temp_dir().join("notes.html")).unwrap();
+        assert!(local_note_allowed(pdf.as_str(), &kinds));
+        assert!(!local_note_allowed(png.as_str(), &kinds));
+        assert!(!local_note_allowed(html.as_str(), &kinds));
+        assert!(!local_note_allowed(pdf.as_str(), &[]));
+        assert!(study_navigation_allowed(pdf.as_str(), &allow, &[], &kinds));
+        assert!(!study_navigation_allowed(html.as_str(), &allow, &[], &kinds));
     }
 
     #[test]

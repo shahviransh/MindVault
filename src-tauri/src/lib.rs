@@ -256,6 +256,12 @@ fn set_api_key(state: State<AppState>, pin: String, key: String) -> Result<AppVi
 }
 
 #[tauri::command]
+fn set_note_files(state: State<AppState>, kinds: Vec<String>) -> Result<AppView, String> {
+    let mut service = lock(&state);
+    service.set_note_files(&kinds).map_err(|err| err.to_string())
+}
+
+#[tauri::command]
 fn start_session(
     app: AppHandle,
     state: State<AppState>,
@@ -335,21 +341,14 @@ fn reveal(window: &tauri::WebviewWindow) {
     let _ = window.set_focus();
 }
 
-/// Creating a webview from a synchronous command deadlocks WebView2 on Windows,
-/// so the study window never appears. This command stays async for that reason.
-#[tauri::command]
-async fn open_study(app: AppHandle, state: State<'_, AppState>, url: String) -> Result<(), String> {
-    let (allow, blocked) = {
-        let service = lock(&state);
-        service.check_study_url(&url).map_err(|err| err.to_string())?;
-        let view = service.view().map_err(|err| err.to_string())?;
-        let allow = view
-            .session
-            .ok_or_else(|| "No session is running.".to_string())?
-            .frozen_allow;
-        (allow, view.entertainment_hosts)
-    };
-    let parsed = url::Url::parse(&url).map_err(|err| err.to_string())?;
+fn present_study(
+    app: &AppHandle,
+    url: &str,
+    allow: Vec<String>,
+    blocked: Vec<String>,
+    kinds: Vec<String>,
+) -> Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|err| err.to_string())?;
     if let Some(window) = app.get_webview_window("study") {
         if window.navigate(parsed.clone()).is_ok() {
             reveal(&window);
@@ -359,19 +358,25 @@ async fn open_study(app: AppHandle, state: State<'_, AppState>, url: String) -> 
     }
     let navigation_allow = allow.clone();
     let navigation_block = blocked.clone();
+    let navigation_kinds = kinds.clone();
     let popup_app = app.clone();
     let popup_allow = allow;
     let popup_block = blocked;
-    let window = WebviewWindowBuilder::new(&app, "study", WebviewUrl::External(parsed))
+    let popup_kinds = kinds;
+    let window = WebviewWindowBuilder::new(app, "study", WebviewUrl::External(parsed))
         .title("MindVault Study")
         .inner_size(1040.0, 760.0)
         .focused(true)
         .on_navigation(move |next| {
-            next.scheme() == "about"
-                || policy::study_url_allowed_except(next.as_str(), &navigation_allow, &navigation_block).is_ok()
+            policy::study_navigation_allowed(
+                next.as_str(),
+                &navigation_allow,
+                &navigation_block,
+                &navigation_kinds,
+            )
         })
         .on_new_window(move |url, _features| {
-            if policy::study_url_allowed_except(url.as_str(), &popup_allow, &popup_block).is_ok() {
+            if policy::study_navigation_allowed(url.as_str(), &popup_allow, &popup_block, &popup_kinds) {
                 if let Some(study) = popup_app.get_webview_window("study") {
                     let _ = study.navigate(url);
                     reveal(&study);
@@ -384,6 +389,62 @@ async fn open_study(app: AppHandle, state: State<'_, AppState>, url: String) -> 
         .map_err(|err| err.to_string())?;
     reveal(&window);
     Ok(())
+}
+
+fn study_context(state: &State<'_, AppState>) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+    let service = lock(state);
+    let view = service.view().map_err(|err| err.to_string())?;
+    let session = view.session.ok_or_else(|| "No session is running.".to_string())?;
+    Ok((session.frozen_allow, view.entertainment_hosts, session.note_files))
+}
+
+fn pick_note(kinds: &[String]) -> Option<PathBuf> {
+    let mut filters: Vec<&str> = Vec::new();
+    for kind in kinds {
+        filters.extend(policy::extensions_for(kind));
+    }
+    if filters.is_empty() {
+        return None;
+    }
+    rfd::FileDialog::new()
+        .set_title("Open a note")
+        .add_filter("Notes", &filters)
+        .pick_file()
+}
+
+/// Creating a webview from a synchronous command deadlocks WebView2 on Windows,
+/// so the study window never appears. This command stays async for that reason.
+#[tauri::command]
+async fn open_study(app: AppHandle, state: State<'_, AppState>, url: String) -> Result<(), String> {
+    {
+        let service = lock(&state);
+        service.check_study_url(&url).map_err(|err| err.to_string())?;
+    }
+    let (allow, blocked, kinds) = study_context(&state)?;
+    present_study(&app, &url, allow, blocked, kinds)
+}
+
+#[tauri::command]
+async fn open_note(app: AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    let (allow, blocked, kinds) = study_context(&state)?;
+    if kinds.is_empty() {
+        return Err("Notes were left off for this session.".into());
+    }
+    let dialog_kinds = kinds.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = sender.send(pick_note(&dialog_kinds));
+    })
+    .map_err(|err| err.to_string())?;
+    let Some(path) = receiver.recv().map_err(|err| err.to_string())? else {
+        return Ok(());
+    };
+    let url = policy::note_file_url(&path, &kinds).map_err(|err| err.to_string())?;
+    {
+        let service = lock(&state);
+        service.check_study_url(&url).map_err(|err| err.to_string())?;
+    }
+    present_study(&app, &url, allow, blocked, kinds)
 }
 
 #[tauri::command]
@@ -497,6 +558,7 @@ pub fn run() {
             reset_setup,
             set_allowlist,
             set_entertainment,
+            set_note_files,
             set_api_config,
             probe_local_tutors,
             set_api_key,
@@ -508,6 +570,7 @@ pub fn run() {
             end_light,
             end_with_recovery,
             open_study,
+            open_note,
             tutor,
             classify_program,
             accept_suggestion,

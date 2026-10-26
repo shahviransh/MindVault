@@ -1,4 +1,4 @@
-import { BookOpen, ExternalLink, Gamepad2, GraduationCap, Layers, Lock, MessageSquareOff, Search, Sparkles } from "lucide-react";
+import { BookOpen, ExternalLink, FileText, Gamepad2, GraduationCap, Layers, Lock, MessageSquareOff, Search, Sparkles } from "lucide-react";
 import { useState } from "react";
 import { api } from "../api.ts";
 import { hostKind } from "../hostCatalog.ts";
@@ -59,12 +59,16 @@ export function FocusPage({
           </button>
         </div>
       </header>
-      {tab === "browse" ? <Browse hosts={session.frozenAllow} /> : <Tutor blockCompleted={session.blockCompleted} onChange={onChange} />}
+      {tab === "browse" ? (
+        <Browse hosts={session.frozenAllow} noteFiles={session.noteFiles} />
+      ) : (
+        <Tutor blockCompleted={session.blockCompleted} onChange={onChange} />
+      )}
     </div>
   );
 }
 
-function Browse({ hosts }: { hosts: string[] }) {
+function Browse({ hosts, noteFiles }: { hosts: string[]; noteFiles: string[] }) {
   const [url, setUrl] = useState("https://en.wikipedia.org/wiki/Active_recall");
   const studyHosts = hosts.filter((host) => hostKind(host) === "study");
   const gameHosts = hosts.filter((host) => hostKind(host) === "game");
@@ -103,12 +107,27 @@ function Browse({ hosts }: { hosts: string[] }) {
           Open <ExternalLink className="size-4" />
         </button>
       </form>
+      {noteFiles.length > 0 ? (
+        <button
+          type="button"
+          className="mv-btn-ghost w-fit"
+          onClick={() => {
+            void api.openNote().catch((error: unknown) => {
+              toast(error instanceof Error ? error.message : String(error), "bad");
+            });
+          }}
+        >
+          <FileText className="size-4" /> Open a note
+        </button>
+      ) : (
+        <p className="text-xs text-mv-muted">Notes were left off for this session. PDF, pictures, and text can be turned on before the next one.</p>
+      )}
       <div className="grid gap-5 lg:grid-cols-2">
         <HostGroup title="Study" icon={BookOpen} hosts={studyHosts} onOpen={(host) => void open(`https://${host}`)} />
         <HostGroup title="Online puzzle games" icon={Gamepad2} hosts={gameHosts} onOpen={(host) => void open(`https://${host}`)} />
       </div>
       <p className="text-xs text-mv-muted">
-        Pages open in MindVault's own browser window, never your system browser. Links that leave this list are refused. The list stays frozen until
+        Pages open in MindVault's own browser window, never your system browser. Links that leave this list are refused. Local notes open in that same window when you allowed them before the session. The list stays frozen until
         the session ends.
       </p>
     </div>

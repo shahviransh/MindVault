@@ -21,6 +21,7 @@ export const api = {
     call<AppView>("set_allowlist", { pin, hosts }, () => preview.setAllowlist(pin, hosts)),
   setEntertainment: (pin: string, hosts: string[], programs: string[]) =>
     call<AppView>("set_entertainment", { pin, hosts, programs }, () => preview.setEntertainment(pin, hosts, programs)),
+  setNoteFiles: (kinds: string[]) => call<AppView>("set_note_files", { kinds }, () => preview.setNoteFiles(kinds)),
   setApiConfig: (pin: string, base: string, model: string) =>
     call<AppView>("set_api_config", { pin, base, model }, () => preview.setApiConfig(pin, base, model)),
   probeLocalTutors: () =>
@@ -38,6 +39,7 @@ export const api = {
   endLight: (pin: string) => call<AppView>("end_light", { pin }, () => preview.endLight(pin)),
   endWithRecovery: (key: string) => call<AppView>("end_with_recovery", { key }, () => preview.endWithRecovery(key)),
   openStudy: (url: string) => call<void>("open_study", { url }, () => preview.openStudy(url)),
+  openNote: () => call<void>("open_note", {}, () => preview.openNote()),
   tutor: (job: TutorJob) => call<TutorView>("tutor", { job }, () => preview.tutor(job)),
   classify: (imageName: string, path: string, publisher: string) =>
     call<AppView>("classify_program", { imageName, path, publisher }, () => preview.classify(imageName)),

@@ -73,7 +73,7 @@ export function HomePage({
         {view.session ? (
           <ActiveSession view={view} now={now} onChange={onChange} onPage={onPage} />
         ) : (
-          <StartSession onChange={onChange} />
+          <StartSession noteFiles={view.noteFiles} onChange={onChange} />
         )}
       </div>
 
@@ -194,7 +194,13 @@ function ActiveSession({
   );
 }
 
-function StartSession({ onChange }: { onChange: (view: AppView) => void }) {
+const NOTE_CHOICES = [
+  { id: "pdf", label: "PDF" },
+  { id: "image", label: "Pictures" },
+  { id: "text", label: "Text" },
+];
+
+function StartSession({ noteFiles, onChange }: { noteFiles: string[]; onChange: (view: AppView) => void }) {
   const [level, setLevel] = useState<Level>("standard");
   const [minutes, setMinutes] = useState(45);
   const [pin, setPin] = useState("");
@@ -267,6 +273,34 @@ function StartSession({ onChange }: { onChange: (view: AppView) => void }) {
           />
         </label>
       </div>
+
+      <fieldset className="mt-5">
+        <legend className="mv-label">Notes in the study window</legend>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {NOTE_CHOICES.map((choice) => {
+            const on = noteFiles.includes(choice.id);
+            return (
+              <label key={choice.id} className={on ? "mv-chip border-mv-accent bg-mv-accent/15 font-semibold" : "mv-chip"}>
+                <input
+                  type="checkbox"
+                  className="size-3.5 accent-violet-600"
+                  checked={on}
+                  onChange={() => {
+                    const next = on ? noteFiles.filter((kind) => kind !== choice.id) : [...noteFiles, choice.id];
+                    void api.setNoteFiles(next).then(onChange).catch((error: unknown) => {
+                      toast(error instanceof Error ? error.message : String(error), "bad");
+                    });
+                  }}
+                />
+                {choice.label}
+              </label>
+            );
+          })}
+        </div>
+        <p className="mt-2 max-w-xl text-xs text-mv-muted">
+          Turn these on before the session if you want to open your own notes. The choice freezes at the start. Web pages stay on the study list.
+        </p>
+      </fieldset>
 
       <div className="mt-5 flex flex-wrap items-center gap-4">
         <button type="button" className="mv-btn px-6 py-3 text-base" onClick={() => void start()}>
