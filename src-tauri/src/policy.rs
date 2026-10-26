@@ -63,11 +63,23 @@ pub const DENY_HOSTS: &[&str] = &[
     "anthropic.com",
     "gemini.google.com",
     "copilot.microsoft.com",
+    "copilot.com",
+    "sydney.bing.com",
+    "edgeservices.bing.com",
     "githubcopilot.com",
+    "copilot-proxy.githubusercontent.com",
     "cursor.com",
     "cursor.sh",
     "ollama.com",
     "lmstudio.ai",
+    "mistral.ai",
+    "x.ai",
+    "grok.com",
+    "perplexity.ai",
+    "deepseek.com",
+    "poe.com",
+    "character.ai",
+    "openrouter.ai",
     "youtube.com",
     "youtu.be",
     "netflix.com",
@@ -94,6 +106,9 @@ const AI_IMAGES: &[&str] = &[
     "cursor.exe",
     "copilot.exe",
     "mscopilot.exe",
+    "copilotapp.exe",
+    "copilotapphost.exe",
+    "copilotapp_proxy.exe",
     "githubcopilot.exe",
     "code.exe",
 ];
@@ -560,17 +575,48 @@ pub fn specs_for(
 }
 
 pub fn ai_domains_except(api_host: &str) -> Vec<String> {
+    // Chat and completion hosts only. Bing Search, Office, and github.com stay off this list.
     const AI: &[&str] = &[
         "chatgpt.com",
+        "api.openai.com",
+        "chat.openai.com",
+        "ab.chatgpt.com",
+        "ws.chatgpt.com",
         "claude.ai",
         "api.anthropic.com",
+        "a-api.anthropic.com",
         "gemini.google.com",
         "generativelanguage.googleapis.com",
         "copilot.microsoft.com",
+        "copilot.com",
+        "sydney.bing.com",
+        "edgeservices.bing.com",
         "githubcopilot.com",
+        "api.githubcopilot.com",
+        "api.individual.githubcopilot.com",
+        "api.business.githubcopilot.com",
+        "api.enterprise.githubcopilot.com",
+        "proxy.individual.githubcopilot.com",
+        "proxy.business.githubcopilot.com",
+        "proxy.enterprise.githubcopilot.com",
+        "copilot-proxy.githubusercontent.com",
         "api2.cursor.sh",
+        "api3.cursor.sh",
+        "api.cursor.com",
         "ollama.com",
         "lmstudio.ai",
+        "api.mistral.ai",
+        "chat.mistral.ai",
+        "api.x.ai",
+        "grok.com",
+        "perplexity.ai",
+        "api.perplexity.ai",
+        "api.deepseek.com",
+        "chat.deepseek.com",
+        "poe.com",
+        "character.ai",
+        "openrouter.ai",
+        "api.openrouter.ai",
     ];
     let api_host = normalize_host(api_host);
     AI.iter()
@@ -694,9 +740,20 @@ pub fn candidate_programs() -> Vec<(ProgramClass, &'static str, &'static [&'stat
             ProgramClass::Ai,
             "copilot",
             &[
+                "Microsoft/Copilot/Application/copilotapp.exe",
                 "Microsoft/Copilot/Application/mscopilot.exe",
                 "Microsoft/Copilot/mscopilot.exe",
             ],
+        ),
+        (
+            ProgramClass::Ai,
+            "copilotproxy",
+            &["Microsoft/Copilot/Application/copilotapp_proxy.exe"],
+        ),
+        (
+            ProgramClass::Ai,
+            "copilothost",
+            &["Microsoft/Copilot/Application/undocked_copilot/copilotapphost.exe"],
         ),
         (
             ProgramClass::Ai,
@@ -899,6 +956,12 @@ mod tests {
             cmd: vec![],
         };
         assert_eq!(select_targets(&[copilot], Level::Standard, &[], &[], KeptServer::None), vec![14]);
+        let copilot_app = ProcInfo {
+            pid: 18,
+            name: "copilotapp.exe".into(),
+            cmd: vec![],
+        };
+        assert_eq!(select_targets(&[copilot_app], Level::Standard, &[], &[], KeptServer::None), vec![18]);
         let bundled = ProcInfo {
             pid: 15,
             name: "msedgewebview2.exe".into(),
@@ -972,6 +1035,11 @@ mod tests {
         let full = specs_for(Level::Full, &programs, &ai_ips, &fun_ips, &api_ips, r"C:\MindVault.exe");
         assert!(full.iter().any(|rule| rule.name.contains("steam")));
         assert!(full.iter().any(|rule| rule.name == "MindVault_BlockIP_entertainment"));
+        let apis = ai_domains_except("text.pollinations.ai");
+        assert!(apis.iter().any(|host| host == "api.githubcopilot.com"));
+        assert!(apis.iter().any(|host| host == "copilot.microsoft.com"));
+        assert!(apis.iter().any(|host| host == "api.openai.com"));
+        assert!(apis.iter().all(|host| host != "bing.com" && host != "github.com" && !host.contains("pollinations")));
         assert!(ai_domains_except("api.openai.com").iter().all(|host| host != "api.openai.com"));
     }
 }

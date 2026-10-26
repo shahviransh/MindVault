@@ -5,7 +5,7 @@ const STEPS = [
   {
     icon: Layers,
     title: "Pick a lock level",
-    body: "Light stops AI apps and CLIs. Standard also closes your browser and blocks AI sites. Full adds games, video, and social feeds. Sessions last up to 8 hours.",
+    body: "Light stops AI apps and CLIs. Standard also closes your browser and blocks AI sites and their APIs. Full adds games, video, and social feeds. Sessions last up to 8 hours.",
   },
   {
     icon: BookOpen,

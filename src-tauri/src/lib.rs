@@ -1,5 +1,4 @@
 mod enforcer;
-mod hotkey;
 mod oslock;
 mod error;
 mod policy;
@@ -134,7 +133,6 @@ fn arm_watcher(app: &AppHandle) {
     let state = app.state::<AppState>();
     let generation = state.watch.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
-    hotkey::set_active(true);
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(2));
         let state = app.state::<AppState>();
@@ -158,7 +156,6 @@ fn arm_watcher(app: &AppHandle) {
             (pids, active, tooltip(&view))
         };
         set_tray(&app, &text);
-        hotkey::set_active(active);
         if !active {
             break;
         }
@@ -188,7 +185,6 @@ fn run_scheduler(app: &AppHandle) {
 fn disarm(app: &AppHandle) {
     let state = app.state::<AppState>();
     state.watch.fetch_add(1, Ordering::SeqCst);
-    hotkey::set_active(false);
     set_tray(app, "MindVault");
 }
 
@@ -521,7 +517,6 @@ pub fn run() {
         .expect("error while building MindVault")
         .run(|app, event| {
             if matches!(event, RunEvent::Exit) {
-                hotkey::set_active(false);
                 if let Some(state) = app.try_state::<AppState>() {
                     if let Ok(mut service) = state.svc.lock() {
                         let _ = service.on_process_exit();

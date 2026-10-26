@@ -480,6 +480,8 @@ impl Service {
                 } else {
                     crate::enforcer::resolve_ips(&[api_host])
                 };
+                let ai_ips = spare_tutor_ips(ai_ips, &api_ips);
+                let entertainment_ips = spare_tutor_ips(entertainment_ips, &api_ips);
                 let exe = std::env::current_exe()
                     .ok()
                     .and_then(|path| crate::enforcer::firewall_program_path(&path.display().to_string()))
@@ -550,6 +552,10 @@ pub fn validate_api_base(base: &str) -> AppResult<String> {
         }
     }
     Ok(base.trim().trim_end_matches('/').to_string())
+}
+
+fn spare_tutor_ips(blocked: Vec<String>, tutor: &[String]) -> Vec<String> {
+    blocked.into_iter().filter(|ip| !tutor.iter().any(|kept| kept == ip)).collect()
 }
 
 fn api_host(base: &str) -> AppResult<String> {
@@ -800,5 +806,13 @@ mod tests {
         assert!(err.is_ok());
         assert!(svc.accept_suggestion("1234").is_err());
         assert!(svc.view().unwrap().custom_blocks.is_empty());
+    }
+
+    #[test]
+    fn tutor_addresses_stay_out_of_the_block_list() {
+        let blocked = spare_tutor_ips(vec!["1.1.1.1".into(), "9.9.9.9".into()], &["9.9.9.9".into()]);
+        assert_eq!(blocked, vec!["1.1.1.1".to_string()]);
+        assert!(crate::policy::ai_domains_except("api.openai.com").iter().all(|host| host != "api.openai.com"));
+        assert_eq!(api_host("https://api.openai.com/v1").unwrap(), "api.openai.com");
     }
 }

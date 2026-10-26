@@ -13,7 +13,7 @@ import { TimerRing } from "../ui/TimerRing.tsx";
 
 export const LEVELS: { id: Level; title: string; copy: string; tag: string }[] = [
   { id: "light", title: "Light", tag: "AI apps", copy: "Stops AI apps and CLIs. Browser stays open. Pause with your PIN." },
-  { id: "standard", title: "Standard", tag: "+ AI sites", copy: "Also closes the browser and blocks AI sites. Earn early exit with a game or quiz." },
+  { id: "standard", title: "Standard", tag: "+ AI sites", copy: "Also closes the browser and blocks AI sites and their APIs. Earn early exit with a game or quiz." },
   { id: "full", title: "Full", tag: "+ entertainment", copy: "Standard, plus Steam, YouTube, Netflix, and the extra entertainment list in Settings." },
 ];
 
@@ -273,7 +273,7 @@ function StartSession({ onChange }: { onChange: (view: AppView) => void }) {
           <Play className="size-4" /> Start {level} lock
         </button>
         <p className="max-w-md text-xs text-mv-muted">
-          Standard and Full ask for permission to add firewall rules. Denying that cancels the session. Max 8 hours. During a session, Windows key + C and the Copilot key are swallowed. Win+L and Task Manager still work. On a Mac, Option+Space is swallowed and Command+Space still opens Spotlight.
+          Standard and Full ask for permission to add firewall rules. Denying that cancels the session. Max 8 hours. Win+L and Task Manager still work.
         </p>
       </div>
     </section>
