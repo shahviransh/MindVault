@@ -482,11 +482,11 @@ fn is_ai_cli(image: &str, cmd: &[String]) -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum KeptServer {
     None,
-    Ollama,
-    LmStudio,
+    /// Any address on this computer. The port is whatever the user pasted.
+    Local,
 }
 
-/// The local server that matches the saved tutor address stays up. `ollama run` is still closed.
+/// A tutor on this computer stays up, whatever port was pasted. `ollama run` is still closed.
 pub fn kept_server_for_base(base: &str) -> KeptServer {
     let Ok(url) = url::Url::parse(base.trim()) else {
         return KeptServer::None;
@@ -496,24 +496,16 @@ pub fn kept_server_for_base(base: &str) -> KeptServer {
     };
     let host = host.trim_matches(['[', ']']);
     let loopback = host.eq_ignore_ascii_case("localhost") || host == "127.0.0.1" || host == "::1";
-    if !loopback {
-        return KeptServer::None;
-    }
-    match url.port().unwrap_or(0) {
-        11434 => KeptServer::Ollama,
-        1234 => KeptServer::LmStudio,
-        _ => KeptServer::None,
-    }
+    if loopback { KeptServer::Local } else { KeptServer::None }
 }
 
 fn is_spared_server(image: &str, cmd: &[String], kept: KeptServer) -> bool {
     let base = image_base(image);
     let stem = base.trim_end_matches(".exe");
+    let ollama = stem == "ollama app" || (stem == "ollama" && !cmd.iter().any(|arg| arg.eq_ignore_ascii_case("run")));
+    let studio = matches!(stem, "lm studio" | "lms" | "lm-studio" | "lmstudio");
     match kept {
-        KeptServer::Ollama => {
-            stem == "ollama app" || (stem == "ollama" && !cmd.iter().any(|arg| arg.eq_ignore_ascii_case("run")))
-        }
-        KeptServer::LmStudio => matches!(stem, "lm studio" | "lms" | "lm-studio" | "lmstudio"),
+        KeptServer::Local => ollama || studio,
         KeptServer::None => false,
     }
 }
@@ -1025,17 +1017,18 @@ mod tests {
             },
         ];
         assert_eq!(select_targets(&ollama, Level::Light, &[], &[], KeptServer::None), vec![7, 8]);
-        assert_eq!(select_targets(&ollama, Level::Light, &[], &[], KeptServer::Ollama), vec![8]);
+        assert_eq!(select_targets(&ollama, Level::Light, &[], &[], KeptServer::Local), vec![8]);
         let studio = vec![ProcInfo {
             pid: 13,
             name: "LM Studio.exe".into(),
             cmd: vec![],
         }];
         assert_eq!(select_targets(&studio, Level::Light, &[], &[], KeptServer::None), vec![13]);
-        assert_eq!(select_targets(&studio, Level::Light, &[], &[], KeptServer::Ollama), vec![13]);
-        assert_eq!(select_targets(&studio, Level::Light, &[], &[], KeptServer::LmStudio), Vec::<u32>::new());
-        assert_eq!(kept_server_for_base("http://127.0.0.1:1234/v1"), KeptServer::LmStudio);
-        assert_eq!(kept_server_for_base("http://127.0.0.1:11434/v1"), KeptServer::Ollama);
+        assert_eq!(select_targets(&studio, Level::Light, &[], &[], KeptServer::Local), Vec::<u32>::new());
+        assert_eq!(select_targets(&ollama, Level::Light, &[], &[], KeptServer::Local), vec![8]);
+        assert_eq!(kept_server_for_base("http://127.0.0.1:1234/v1"), KeptServer::Local);
+        assert_eq!(kept_server_for_base("http://localhost:1235/v1"), KeptServer::Local);
+        assert_eq!(kept_server_for_base("http://127.0.0.1:11434/v1"), KeptServer::Local);
         assert_eq!(kept_server_for_base("https://api.openai.com/v1"), KeptServer::None);
         let unix = vec![
             ProcInfo {
@@ -1059,8 +1052,8 @@ mod tests {
                 cmd: vec!["ollama".into(), "serve".into()],
             },
         ];
-        assert_eq!(select_targets(&unix, Level::Light, &[], &[], KeptServer::Ollama), Vec::<u32>::new());
-        assert_eq!(select_targets(&unix, Level::Standard, &[], &[], KeptServer::Ollama), vec![9]);
+        assert_eq!(select_targets(&unix, Level::Light, &[], &[], KeptServer::Local), Vec::<u32>::new());
+        assert_eq!(select_targets(&unix, Level::Standard, &[], &[], KeptServer::Local), vec![9]);
         let copilot = ProcInfo {
             pid: 14,
             name: "mscopilot.exe".into(),

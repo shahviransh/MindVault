@@ -479,8 +479,7 @@ impl Service {
                 let kept = kept_server_for_base(&self.store.api_base()?);
                 let mut programs = crate::enforcer::discover_programs(&crate::enforcer::program_roots(), level);
                 programs.retain(|program| match kept {
-                    KeptServer::Ollama => program.label != "ollama",
-                    KeptServer::LmStudio => program.label != "lmstudio",
+                    KeptServer::Local => program.label != "ollama" && program.label != "lmstudio",
                     KeptServer::None => true,
                 });
                 let api_host = api_host(&self.store.api_base()?)?;

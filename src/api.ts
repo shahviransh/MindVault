@@ -28,6 +28,8 @@ export const api = {
     call<LocalTutorStatus[]>("probe_local_tutors", {}, () =>
       LOCAL_PRESETS.map((preset) => ({ id: preset.id, running: false, model: preset.model })),
     ),
+  probeLocalBase: (base: string) =>
+    call<LocalTutorStatus>("probe_local_base", { base }, () => ({ id: "local", running: false, model: "local-model" })),
   setApiKey: (pin: string, key: string) => call<AppView>("set_api_key", { pin, key }, () => preview.setApiKey(pin, key)),
   startSession: (level: Level, minutes: number, pin: string | null) =>
     call<AppView>("start_session", { level, minutes, pin }, () => preview.startSession(level, minutes, pin)),

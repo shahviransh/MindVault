@@ -506,26 +506,13 @@ fn tutor_client(timeout_secs: u64, direct: bool) -> AppResult<reqwest::Client> {
     builder.build().map_err(|err| AppError::Message(err.to_string()))
 }
 
-fn local_tutor_name(base: &str) -> &'static str {
-    if base.contains(":1234") {
-        "LM Studio"
-    } else if base.contains(":11434") {
-        "Ollama"
-    } else if base.contains(":8080") {
-        "llama.cpp"
-    } else {
-        "the local tutor"
-    }
-}
-
 fn send_error(base: &str, err: &reqwest::Error) -> AppError {
     let cause = std::error::Error::source(err)
         .map(|item| item.to_string())
         .unwrap_or_default();
     if is_loopback_base(base) {
-        let name = local_tutor_name(base);
         return AppError::Message(format!(
-            "Could not reach {name}. Start it, turn on its local server, and load a model. {cause}"
+            "Could not reach {base}. Start the local server at that address and load a model. {cause}"
         ));
     }
     if cause.is_empty() {
@@ -596,17 +583,14 @@ async fn usable_model(base: &str, saved: &str) -> AppResult<String> {
         .map_err(|err| send_error(base, &err))?;
     if !response.status().is_success() {
         return Err(AppError::Message(format!(
-            "Load a model in {} and try again.",
-            local_tutor_name(base)
+            "Load a model at {base} and try again."
         )));
     }
     let body = response
         .json::<Value>()
         .await
         .map_err(|err| AppError::Message(err.to_string()))?;
-    first_model_id(&body).ok_or_else(|| {
-        AppError::Message(format!("Load a model in {} and try again.", local_tutor_name(base)))
-    })
+    first_model_id(&body).ok_or_else(|| AppError::Message(format!("Load a model at {base} and try again.")))
 }
 
 pub async fn fetch_tutor(base: &str, key: &str, model: &str, job: &TutorJob) -> AppResult<TutorView> {
@@ -718,6 +702,43 @@ pub async fn probe_local_tutors() -> Vec<LocalTutorStatus> {
         });
     }
     found
+}
+
+pub async fn probe_local_base(base: &str) -> LocalTutorStatus {
+    let base = base.trim().trim_end_matches('/').to_string();
+    let idle = LocalTutorStatus {
+        id: "local".into(),
+        running: false,
+        model: "local-model".into(),
+    };
+    if !is_loopback_base(&base) {
+        return idle;
+    }
+    let Ok(client) = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(700))
+        .http1_only()
+        .no_proxy()
+        .build()
+    else {
+        return idle;
+    };
+    let url = format!("{base}/models");
+    match client.get(url).send().await {
+        Ok(response) if response.status().is_success() => {
+            let model = response
+                .json::<Value>()
+                .await
+                .ok()
+                .and_then(|body| first_model_id(&body))
+                .unwrap_or_else(|| "local-model".into());
+            LocalTutorStatus {
+                id: "local".into(),
+                running: true,
+                model,
+            }
+        }
+        _ => idle,
+    }
 }
 
 #[cfg(test)]

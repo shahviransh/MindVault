@@ -25,7 +25,7 @@ Object.defineProperty(globalThis, "window", {
 });
 
 const { preview } = await import("./mockBackend.ts");
-const { allowsEmptyKey, isKeylessBase, FREE_TUTOR } = await import("./lib/endpoint.ts");
+const { allowsEmptyKey, isKeylessBase, isLoopbackBase, FREE_TUTOR } = await import("./lib/endpoint.ts");
 const { daySeed } = await import("./lib/rng.ts");
 
 function reset() {
@@ -122,6 +122,8 @@ test("the tutor quizzes the pasted text and rejects a freeform prompt", () => {
   ready();
   assert.equal(preview.getState().apiBase, FREE_TUTOR.base);
   assert.equal(allowsEmptyKey(FREE_TUTOR.base), true);
+  assert.equal(isLoopbackBase("http://localhost:1235/v1"), true);
+  assert.equal(preview.setApiConfig("1234", "http://localhost:1235/v1", "local-model").apiBase, "http://localhost:1235/v1");
   assert.equal(isKeylessBase("https://api.openai.com/v1"), false);
   preview.setApiConfig("1234", "https://api.openai.com/v1", "gpt-4o-mini");
   preview.startSession("light", 10, null);

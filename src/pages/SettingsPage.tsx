@@ -19,7 +19,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api.ts";
 import { DIFFICULTIES } from "../games/catalog.ts";
 import { hostKind } from "../hostCatalog.ts";
-import { allowsEmptyKey, CLOUD_BASE, CLOUD_MODEL, FREE_TUTORS, LOCAL_PRESETS } from "../lib/endpoint.ts";
+import { allowsEmptyKey, CLOUD_BASE, CLOUD_MODEL, FREE_TUTORS, isLoopbackBase, LOCAL_PRESETS } from "../lib/endpoint.ts";
 import { prefsStore } from "../lib/prefs.ts";
 import { toast } from "../lib/toast.ts";
 import type { Theme } from "../theme.ts";
@@ -395,12 +395,9 @@ function Sites({ view, locked, onSave }: { view: AppView; locked: boolean; onSav
 type Save = (action: () => Promise<AppView>, done: string) => Promise<void>;
 
 function tutorChoice(base: string): string {
-  const normalized = base.replace(/\/$/, "");
-  const local = LOCAL_PRESETS.find((preset) => preset.base === normalized);
-  if (local) return local.id;
-  const free = FREE_TUTORS.find((tutor) => tutor.base === normalized);
-  if (free) return free.id;
-  return "own";
+  if (isLoopbackBase(base)) return "local";
+  const free = FREE_TUTORS.find((tutor) => tutor.base === base.replace(/\/$/, ""));
+  return free ? free.id : "own";
 }
 
 function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean; pin: string; save: Save }) {
@@ -409,36 +406,45 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
   const [model, setModel] = useState(view.model);
   const [apiKey, setApiKey] = useState("");
   const [tutorPin, setTutorPin] = useState("");
-  const [probes, setProbes] = useState<LocalTutorStatus[]>([]);
-  const localPreset = LOCAL_PRESETS.find((preset) => preset.id === choice);
+  const [probes, setProbes] = useState<LocalTutorStatus | null>(null);
   const freeTutor = FREE_TUTORS.find((tutor) => tutor.id === choice);
-  const probe = probes.find((item) => item.id === choice);
+  const local = choice === "local";
   const own = choice === "own";
-  const ready = !own || view.hasApiKey || allowsEmptyKey(base);
+  const ready = local ? isLoopbackBase(base) : !own || view.hasApiKey || allowsEmptyKey(base);
 
   useEffect(() => {
+    if (!local || !isLoopbackBase(base)) {
+      setProbes(null);
+      return;
+    }
     let cancel = false;
-    api
-      .probeLocalTutors()
-      .then((rows) => {
-        if (!cancel) setProbes(rows);
-      })
-      .catch(() => undefined);
+    const timer = window.setTimeout(() => {
+      api
+        .probeLocalBase(base)
+        .then((row) => {
+          if (!cancel) setProbes(row);
+        })
+        .catch(() => undefined);
+    }, 400);
     return () => {
       cancel = true;
+      window.clearTimeout(timer);
     };
-  }, []);
+  }, [local, base]);
 
   function selected(): { base: string; model: string } {
-    if (localPreset) return { base: localPreset.base, model: probe?.model || localPreset.model };
     if (freeTutor) return { base: freeTutor.base, model: freeTutor.model };
+    if (local) {
+      const picked = probes?.running && (!model.trim() || model === "local-model") ? probes.model : model;
+      return { base, model: picked };
+    }
     return { base, model };
   }
 
-  const detail = localPreset
-    ? probe?.running
-      ? `${localPreset.label} is running (${probe.model}). Your notes stay on this computer. No API key. During a session MindVault leaves this app open and closes the other AI apps.`
-      : `Start ${localPreset.label} and leave it open, then save. Your notes stay on this computer. No API key.`
+  const detail = local
+    ? probes?.running
+      ? `Reached ${base}. Loaded model: ${probes.model}. Your notes stay on this computer. No API key.`
+      : "Paste the address the local app shows, such as http://localhost:1235/v1. The port can differ. Start its server and load a model. No API key."
     : freeTutor
       ? freeTutor.detail
       : "Paste the address and model from your provider. The key is stored in the system keychain.";
@@ -457,12 +463,16 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
           value={choice}
           disabled={locked}
           groups={[
-            { label: "On this computer", options: LOCAL_PRESETS.map((preset) => ({ value: preset.id, label: preset.label })) },
+            { label: "On this computer", options: [{ value: "local", label: "Local server" }] },
             { label: "Free online", options: FREE_TUTORS.map((tutor) => ({ value: tutor.id, label: tutor.label })) },
             { label: "Your own account", options: [{ value: "own", label: "I have an API key" }] },
           ]}
           onChange={(next) => {
             setChoice(next);
+            if (next === "local" && !isLoopbackBase(base)) {
+              setBase("");
+              setModel("local-model");
+            }
             if (next === "own") {
               setBase(CLOUD_BASE);
               setModel(CLOUD_MODEL);
@@ -476,9 +486,43 @@ function TutorKey({ view, locked, pin, save }: { view: AppView; locked: boolean;
         }`}
       >
         <span className={`size-1.5 rounded-full ${ready ? "bg-mv-good" : "bg-mv-warn"}`} />
-        {own ? (view.hasApiKey ? "Key saved" : "No key yet") : "No API key"}
+        {own ? (view.hasApiKey ? "Key saved" : "No key yet") : local && !isLoopbackBase(base) ? "Paste a local address" : "No API key"}
       </span>
       <p className="mt-3 text-xs leading-relaxed text-mv-muted">{detail}</p>
+      {local ? (
+        <div className="mt-4 grid gap-3">
+          <label className="block text-sm text-mv-muted">
+            Local address
+            <input
+              className="mv-input mt-1"
+              value={base}
+              disabled={locked}
+              placeholder="http://localhost:1235/v1"
+              onChange={(event) => setBase(event.target.value)}
+            />
+          </label>
+          <div className="flex flex-wrap gap-2">
+            {LOCAL_PRESETS.map((preset) => (
+              <button
+                key={preset.id}
+                type="button"
+                className="mv-btn-ghost"
+                disabled={locked}
+                onClick={() => {
+                  setBase(preset.base);
+                  setModel(preset.model);
+                }}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <label className="block text-sm text-mv-muted">
+            Model
+            <input className="mv-input mt-1" value={model} disabled={locked} onChange={(event) => setModel(event.target.value)} />
+          </label>
+        </div>
+      ) : null}
       {own ? (
         <div className="mt-4 grid gap-3">
           <div className="grid gap-3 sm:grid-cols-2">

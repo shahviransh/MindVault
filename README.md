@@ -39,13 +39,13 @@ Full can also take an extra entertainment list: sites and program names, one per
 
 ## Tutor
 
-Settings has a tutor dropdown. A new install uses Kilo Auto, which needs no account and no API key. DevToolBox is the other free choice. The page you study is sent to whichever of those you pick. The list also includes Ollama, LM Studio, and llama.cpp on this computer. Those keep your notes local and need no key. LM Studio has to have its local server started and a model loaded. "I have an API key" is for a provider address of your own. That key is stored in the system keychain (Windows Credential Manager on Windows).
+Settings has a tutor dropdown. A new install uses Kilo Auto, which needs no account and no API key. DevToolBox is the other free choice. The page you study is sent to whichever of those you pick. On this computer, paste the local address the server shows, such as `http://localhost:1235/v1`. The port is whatever that app is using. Ollama, LM Studio, and llama.cpp buttons only fill the field. Those keep your notes local and need no key. The local server has to be started and a model loaded. "I have an API key" is for a provider address of your own. That key is stored in the system keychain (Windows Credential Manager on Windows).
 
 Plain `http` is allowed only for `localhost`, `127.0.0.1`, and `::1`. A saved cloud key is not sent to the free online tutor.
 
 If the tutor is Gemini, save `https://generativelanguage.googleapis.com/v1beta/openai` with your own key. That API stays open for the session. The Gemini website, `gemini.google.com`, stays blocked. The same rule applies to any saved provider: its host stays open, and the other AI APIs stay blocked.
 
-The local server you saved is the one left running. `ollama run` is closed either way. If the tutor is Ollama, LM Studio is closed, and the reverse is true when the tutor is LM Studio. The free online tutor and a cloud key close both.
+When the tutor address is on this computer, Ollama's server and LM Studio stay open on whatever port you pasted. `ollama run` is still closed. A free online tutor or a cloud key closes both.
 
 The tutor can also classify a program you want blocked next time. Protected system programs are refused. Accepting a suggestion adds it to the next session, not the one already running.
 
