@@ -784,7 +784,7 @@ mod tests {
         ready(&mut svc);
         let fresh = svc.prepare_classify("notes.exe").unwrap();
         assert!(fresh.key.is_empty());
-        assert_eq!(fresh.base, "https://text.pollinations.ai/openai");
+        assert_eq!(fresh.base, "https://ai-gateway.kilo.ai/api/v1");
         svc.set_api_config("1234", "https://api.openai.com/v1", "gpt-4o-mini")
             .unwrap();
         assert!(matches!(svc.prepare_classify("notes.exe"), Err(AppError::NoKey)));
@@ -798,12 +798,12 @@ mod tests {
         assert!(validate_api_base("http://10.0.0.5:11434/v1").is_err());
         assert!(validate_api_base("http://[::1]:8080/v1").is_ok());
         svc.end_light("1234").unwrap();
-        svc.set_api_config("1234", "https://text.pollinations.ai/openai", "openai-fast")
+        svc.set_api_config("1234", "https://ai-gateway.kilo.ai/api/v1", "kilo-auto/free")
             .unwrap();
         svc.set_api_key("1234", "sk-keep-this-local").unwrap();
         let call = svc.prepare_classify("notes.exe").unwrap();
         assert!(call.key.is_empty());
-        assert_eq!(call.model, "openai-fast");
+        assert_eq!(call.model, "kilo-auto/free");
         svc.set_api_config("1234", "https://api.openai.com/v1", "gpt-4o-mini")
             .unwrap();
         let cloud = svc.prepare_classify("notes.exe").unwrap();

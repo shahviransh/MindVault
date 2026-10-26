@@ -39,7 +39,7 @@ Full can also take an extra entertainment list: sites and program names, one per
 
 ## Tutor
 
-Settings has a tutor dropdown. A new install uses Pollinations, which needs no account and no API key. The same free list includes Kilo Auto and DevToolBox. The page you study is sent to whichever of those you pick. The list also includes Ollama, LM Studio, and llama.cpp on this computer. Those keep your notes local and need no key. "I have an API key" is for a provider address of your own. That key is stored in the system keychain (Windows Credential Manager on Windows).
+Settings has a tutor dropdown. A new install uses Kilo Auto, which needs no account and no API key. DevToolBox is the other free choice. The page you study is sent to whichever of those you pick. The list also includes Ollama, LM Studio, and llama.cpp on this computer. Those keep your notes local and need no key. LM Studio has to have its local server started and a model loaded. "I have an API key" is for a provider address of your own. That key is stored in the system keychain (Windows Credential Manager on Windows).
 
 Plain `http` is allowed only for `localhost`, `127.0.0.1`, and `::1`. A saved cloud key is not sent to the free online tutor.
 

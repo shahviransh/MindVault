@@ -16,13 +16,6 @@ export const LOCAL_PRESETS = [
 /** Keyless tutors. Each one was checked to answer without an account. */
 export const FREE_TUTORS = [
   {
-    id: "pollinations",
-    label: "Pollinations",
-    base: "https://text.pollinations.ai/openai",
-    model: "openai-fast",
-    detail: "No account and no API key. The page you study is sent to Pollinations. About one reply every 30 seconds.",
-  },
-  {
     id: "kilo",
     label: "Kilo Auto",
     base: "https://ai-gateway.kilo.ai/api/v1",

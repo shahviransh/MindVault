@@ -54,11 +54,13 @@ impl Store {
             );",
         )?;
         let store = Self { conn };
-        if store.get("api_base")?.is_none() {
-            store.set("api_base", "https://text.pollinations.ai/openai")?;
+        if store.get("api_base")?.is_none() || store.get("api_base")?.as_deref().is_some_and(|base| base.contains("pollinations.ai"))
+        {
+            store.set("api_base", "https://ai-gateway.kilo.ai/api/v1")?;
+            store.set("model", "kilo-auto/free")?;
         }
         if store.get("model")?.is_none() {
-            store.set("model", "openai-fast")?;
+            store.set("model", "kilo-auto/free")?;
         }
         if store.get("allow_hosts")?.is_none() {
             store.set(
@@ -132,7 +134,7 @@ impl Store {
     pub fn api_base(&self) -> AppResult<String> {
         Ok(self
             .get("api_base")?
-            .unwrap_or_else(|| "https://text.pollinations.ai/openai".into()))
+            .unwrap_or_else(|| "https://ai-gateway.kilo.ai/api/v1".into()))
     }
 
     pub fn set_api_base(&self, value: &str) -> AppResult<()> {
@@ -140,7 +142,7 @@ impl Store {
     }
 
     pub fn model(&self) -> AppResult<String> {
-        Ok(self.get("model")?.unwrap_or_else(|| "openai-fast".into()))
+        Ok(self.get("model")?.unwrap_or_else(|| "kilo-auto/free".into()))
     }
 
     pub fn set_model(&self, value: &str) -> AppResult<()> {

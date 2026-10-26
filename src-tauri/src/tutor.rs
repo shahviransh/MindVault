@@ -123,6 +123,7 @@ SOURCE:\n---\n{source}\n---\nEXPLANATION:\n---\n{explanation}\n---"
     json!({
         "model": model,
         "temperature": 0.2,
+        "stream": false,
         "response_format": { "type": "json_object" },
         "messages": [
             {
@@ -344,7 +345,6 @@ struct KeylessTutor {
 }
 
 const KEYLESS_TUTORS: &[KeylessTutor] = &[
-    KeylessTutor { host: "text.pollinations.ai", path: "/openai", prompt: false },
     KeylessTutor { host: "ai-gateway.kilo.ai", path: "/api/v1", prompt: false },
     KeylessTutor {
         host: "devtoolbox-api.devtoolbox-api.workers.dev",
@@ -495,22 +495,54 @@ fn prompt_from_body(body: &Value) -> String {
         .unwrap_or_default()
 }
 
-fn tutor_client(timeout_secs: u64) -> AppResult<reqwest::Client> {
-    reqwest::Client::builder()
+fn tutor_client(timeout_secs: u64, direct: bool) -> AppResult<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(timeout_secs))
         .user_agent("MindVault/0.1")
-        .build()
-        .map_err(|err| AppError::Message(err.to_string()))
+        .http1_only();
+    if direct {
+        builder = builder.no_proxy();
+    }
+    builder.build().map_err(|err| AppError::Message(err.to_string()))
+}
+
+fn local_tutor_name(base: &str) -> &'static str {
+    if base.contains(":1234") {
+        "LM Studio"
+    } else if base.contains(":11434") {
+        "Ollama"
+    } else if base.contains(":8080") {
+        "llama.cpp"
+    } else {
+        "the local tutor"
+    }
+}
+
+fn send_error(base: &str, err: &reqwest::Error) -> AppError {
+    let cause = std::error::Error::source(err)
+        .map(|item| item.to_string())
+        .unwrap_or_default();
+    if is_loopback_base(base) {
+        let name = local_tutor_name(base);
+        return AppError::Message(format!(
+            "Could not reach {name}. Start it, turn on its local server, and load a model. {cause}"
+        ));
+    }
+    if cause.is_empty() {
+        AppError::Message(err.to_string())
+    } else {
+        AppError::Message(format!("{err} {cause}"))
+    }
 }
 
 async fn post_prompt(base: &str, body: &Value, timeout_secs: u64) -> AppResult<Value> {
-    let client = tutor_client(timeout_secs)?;
+    let client = tutor_client(timeout_secs, is_loopback_base(base))?;
     let response = client
         .post(base.trim_end_matches('/'))
         .json(&json!({ "prompt": prompt_from_body(body), "max_tokens": 800 }))
         .send()
         .await
-        .map_err(|err| AppError::Message(err.to_string()))?;
+        .map_err(|err| send_error(base, &err))?;
     let payload = read_tutor_response(response).await?;
     openai_from_prompt(&payload)
 }
@@ -521,7 +553,7 @@ async fn read_tutor_response(response: reqwest::Response) -> AppResult<Value> {
         let text = response.text().await.unwrap_or_default();
         if status.as_u16() == 402 || text.contains("FREE_LIMIT") {
             return Err(AppError::Message(
-                "This free tutor allows about one reply every 30 seconds. Wait a moment and try again.".into(),
+                "This free tutor is at its limit. Wait a moment and try again.".into(),
             ));
         }
         if status.as_u16() == 429 {
@@ -540,18 +572,46 @@ async fn post_chat(base: &str, key: &str, body: &Value, timeout_secs: u64) -> Ap
         return post_prompt(base, body, timeout_secs).await;
     }
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
-    let client = tutor_client(timeout_secs)?;
+    let client = tutor_client(timeout_secs, is_loopback_base(base))?;
     let request = client.post(url).json(body);
     let request = if key.is_empty() { request } else { request.bearer_auth(key) };
     let response = request
         .send()
         .await
-        .map_err(|err| AppError::Message(err.to_string()))?;
+        .map_err(|err| send_error(base, &err))?;
     read_tutor_response(response).await
 }
 
+async fn usable_model(base: &str, saved: &str) -> AppResult<String> {
+    let saved = saved.trim();
+    if !is_loopback_base(base) || (!saved.is_empty() && !saved.eq_ignore_ascii_case("local-model")) {
+        return Ok(saved.to_string());
+    }
+    let url = format!("{}/models", base.trim_end_matches('/'));
+    let client = tutor_client(15, true)?;
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|err| send_error(base, &err))?;
+    if !response.status().is_success() {
+        return Err(AppError::Message(format!(
+            "Load a model in {} and try again.",
+            local_tutor_name(base)
+        )));
+    }
+    let body = response
+        .json::<Value>()
+        .await
+        .map_err(|err| AppError::Message(err.to_string()))?;
+    first_model_id(&body).ok_or_else(|| {
+        AppError::Message(format!("Load a model in {} and try again.", local_tutor_name(base)))
+    })
+}
+
 pub async fn fetch_tutor(base: &str, key: &str, model: &str, job: &TutorJob) -> AppResult<TutorView> {
-    let (body, timeout) = body_for(base, request_body(job, model));
+    let model = usable_model(base, model).await?;
+    let (body, timeout) = body_for(base, request_body(job, &model));
     let payload = post_chat(base, key, &body, timeout).await?;
     content_from_response(&payload)
 }
@@ -564,11 +624,13 @@ pub async fn fetch_classification(
     path: &str,
     publisher: &str,
 ) -> AppResult<Suggestion> {
+    let model = usable_model(base, model).await?;
     let (body, timeout) = body_for(
         base,
         json!({
             "model": model,
             "temperature": 0,
+            "stream": false,
             "response_format": { "type": "json_object" },
             "messages": [
                 {
@@ -621,6 +683,8 @@ pub async fn probe_local_tutors() -> Vec<LocalTutorStatus> {
     ];
     let Ok(client) = reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(700))
+        .http1_only()
+        .no_proxy()
         .build()
     else {
         return PRESETS
@@ -726,6 +790,7 @@ mod tests {
         let job = TutorJob::Quiz { source: "cells".into() };
         let (local, timeout) = body_for("http://127.0.0.1:11434/v1", request_body(&job, "llama3.2"));
         assert!(local.get("response_format").is_none());
+        assert_eq!(local.get("stream").and_then(|value| value.as_bool()), Some(false));
         assert!(timeout > 45);
         let (cloud, _) = body_for("https://api.openai.com/v1", request_body(&job, "gpt-4o-mini"));
         assert!(cloud.get("response_format").is_some());
@@ -735,21 +800,17 @@ mod tests {
 
     #[test]
     fn keyless_tutors_are_only_the_checked_hosts() {
-        assert!(is_keyless_base("https://text.pollinations.ai/openai"));
-        assert!(is_keyless_base("https://text.pollinations.ai/openai/"));
         assert!(is_keyless_base("https://ai-gateway.kilo.ai/api/v1"));
+        assert!(is_keyless_base("https://ai-gateway.kilo.ai/api/v1/"));
         assert!(is_keyless_base("https://devtoolbox-api.devtoolbox-api.workers.dev/ai/generate"));
-        assert!(!is_keyless_base("http://text.pollinations.ai/openai"));
-        assert!(!is_keyless_base("https://text.pollinations.ai/openai/chat"));
-        assert!(!is_keyless_base("https://evil.pollinations.ai/openai"));
-        assert!(!is_keyless_base("https://text.pollinations.ai.evil/openai"));
+        assert!(!is_keyless_base("https://text.pollinations.ai/openai"));
         assert!(!is_keyless_base("https://api.kilo.ai/api/gateway"));
         assert!(!is_keyless_base("https://ai-gateway.kilo.ai/api/v1/chat/completions"));
         let wrapped = openai_from_prompt(&json!({"response": {"questions": [{"prompt": "Q"}]}})).unwrap();
         assert_eq!(wrapped.pointer("/choices/0/message/content").and_then(|value| value.as_str()), Some("{\"questions\":[{\"prompt\":\"Q\"}]}"));
         let (body, timeout) = body_for(
-            "https://text.pollinations.ai/openai",
-            json!({"model": "openai-fast", "response_format": {"type": "json_object"}}),
+            "https://ai-gateway.kilo.ai/api/v1",
+            json!({"model": "kilo-auto/free", "response_format": {"type": "json_object"}}),
         );
         assert!(body.get("response_format").is_none());
         assert!(timeout > 45);
